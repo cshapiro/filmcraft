@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use filmcraft_export::presets::{DEFAULT_PRESET, preset_key};
-use filmcraft_export::{ExportPreset, ExportSettings, Format, HardwareEncoding};
+use filmcraft_export::{ExportPreset, ExportSettings, Format, GpuRendering, HardwareEncoding};
 use filmcraft_project::{ItemId, Project};
 use filmcraft_time::{FrameRate, Tick, TimeRange};
 use serde::{Deserialize, Serialize};
@@ -129,12 +129,30 @@ fn parse_file(bytes: &[u8]) -> std::result::Result<PresetFile, String> {
 // settings
 // ---------------------------------------------------------------------------------------------
 
+/// `sampleRate` → `sample_rate`.
+fn camel_to_snake(k: &str) -> String {
+    let mut out = String::with_capacity(k.len() + 2);
+    for c in k.chars() {
+        if c.is_ascii_uppercase() {
+            out.push('_');
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Deep-merge `patch` into `base` (objects merge, everything else replaces).
 fn merge(base: &mut Value, patch: &Value) {
     match (base, patch) {
         (Value::Object(b), Value::Object(p)) => {
             for (k, v) in p {
-                merge(b.entry(k.clone()).or_insert(Value::Null), v);
+                // Some nested settings structs serialize snake_case (`audio.sample_rate`); accept the documented camelCase
+                // spelling for them too instead of adding a second, ignored key next to the default.
+                let snake = camel_to_snake(k);
+                let key = if !b.contains_key(k) && b.contains_key(&snake) { snake } else { k.clone() };
+                merge(b.entry(key).or_insert(Value::Null), v);
             }
         }
         (b, p) => *b = p.clone(),
@@ -210,6 +228,18 @@ pub fn settings_from_params(s: &Session, p: &Value, cmd: &str) -> Result<(Option
                 }
             }
             other => serde_json::from_value(other.clone()).map_err(|_| bad(cmd, "hardwareEncoding: off | auto"))?,
+        };
+    }
+    if let Some(v) = p.get("gpuRendering") {
+        settings.gpu_rendering = match v {
+            Value::Bool(on) => {
+                if *on {
+                    GpuRendering::Auto
+                } else {
+                    GpuRendering::Off
+                }
+            }
+            other => serde_json::from_value(other.clone()).map_err(|_| bad(cmd, "gpuRendering: off | auto"))?,
         };
     }
     if let Some(v) = bool_p(p, "burnCaptions") {
@@ -769,7 +799,7 @@ fn queue_move(s: &mut Session, p: &Value) -> Result<Value> {
     let n = s.export_queue.items.len() as i64;
     let to = match (p.get("to").and_then(Value::as_i64), p.get("by").and_then(Value::as_i64)) {
         (Some(t), _) => t,
-        (None, Some(b)) => i as i64 + b,
+        (None, Some(b)) => (i as i64).saturating_add(b),
         _ => return Err(bad(cmd, "need `to` (index) or `by` (±n)")),
     }
     .clamp(0, n - 1) as usize;
