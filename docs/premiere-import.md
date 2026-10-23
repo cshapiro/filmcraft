@@ -18,12 +18,33 @@ default is linked media and a new `source.filmcraft-import-N` directory beside t
 Use the explicit command for a custom destination, copied media or frame rate. Existing destination
 directories are refused. `sequence` optionally chooses the active sequence by ObjectUID or unique
 name; an ambiguous requested name requires its ObjectUID. All sequences
-are imported. Without it, “Sequence 01” wins, then the sequence with the most video items.
+are imported. Without it, the sequence with the most video items wins; “Sequence 01” is only
+a tie-break, followed by the latest video end time.
 
 The destination contains the unchanged `source.prproj`, `provenance.json`, and (copy mode) a
 `media/` directory with full SHA-256 named files. Link mode uses original absolute paths without
-writing to those files. The project stores the original source paths, hashes, source tree and
-warnings independently of timeline edits. Undo does not delete the saved source snapshot.
+writing to those files. Linked imports probe media and retain the existing size/head/tail relink
+fingerprint in both the media item and immutable provenance (at most 2 MiB read by the native
+host), but defer full-file SHA-256. A matching fingerprint is not proof that every byte is unchanged.
+Their provenance
+`sha256` is null, even when the media is online; `bytes` records its size when available.
+The source project is still hashed and snapshotted immediately. Copied media is hashed and verified
+synchronously. The project stores the original source paths, available import-time hashes, source
+tree and warnings independently of timeline edits. Undo does not delete the saved source snapshot.
+
+For an explicit, potentially expensive inspection of current media, use:
+
+```sh
+filmcraft-cli --project /path/to/episode.fcproj exec premiere.hashMedia '{"import":0}'
+```
+
+`import` is the zero-based provenance record index. This read-only command repeats document-path,
+extension and opener checks before hashing each current imported path. It returns SHA-256/size
+or a per-file error; `matchesImport` compares against an existing import-time hash, or is null
+when none was recorded. A later hash cannot prove what bytes existed at import time. The command
+does not backfill provenance, rewrite `provenance.json`, save the project or add an undo step.
+It runs synchronously only when explicitly requested; it is not a background job or a promise
+that the remaining probe/copy work cannot block the UI.
 
 Files with workflow provenance use the distinct `filmcraft.project.workflow` format tag and
 workflow version 1. Once saved with provenance, a file requires a build that understands this
@@ -41,8 +62,13 @@ in the original snapshot and are reported once per distinct effect name with an 
 rather than silently recreated with guessed parameters. Fader-muted audio imports audible unless
 the track is also muted through `IsMuted`.
 Fonts/styles and transition appearance are not guaranteed to match Premiere. Missing, ambiguous
-or unreadable media remains visible as offline placeholders. A failure to open/read a media
-file for hashing reports its path and the OS error, leaves its hash/size unknown, and continues
+or unreadable media remains visible as offline placeholders. Document references pass the existing
+document-path policy before canonicalization. Both the reference and resolved file must have a
+recognized media extension, and the registered media opener must accept the file before it is
+hashed or copied. Non-media, refused paths and failed probes stay offline with only their original
+reference recorded, no hash/size, and no copied file. Probing may read media headers or, for formats
+without a streaming opener, the file itself; a recognized extension alone is insufficient.
+A failure to open/read an accepted media file reports its path and the error and continues
 the import in both link and copy modes. It does not attempt to change permissions or copy an
 unreadable source. Destination write failures and failed copy-integrity checks still abort.
 
@@ -71,24 +97,46 @@ are not mapped. These fixes address the name/reference defects discussed in
 [issue #978](https://github.com/storytold/filmcraft/issues/978#issuecomment-6254913542);
 they do not add track-fader mute or change audio gain conversion.
 
+Text graphics match the text component's `MatchName` and Source Text ParameterID 1, then decode
+the static base64 `StartKeyframeValue` using the bounded length-prefixed UTF-8 envelope heuristic
+also used for captions. This is based on structural observations of user-owned XML, not a complete
+text-format specification. `InstanceName` is a layer label and is never substituted for visible text.
+Missing, unreadable or animated Source Text is reported and left unresolved; fonts, styling and
+text animation are not reconstructed.
+
 Projects containing only settings and no `Sequence` objects currently report an empty-document
 error. They do not create an imported project or destination; settings-only import is unsupported.
 
-Input is bounded to 64 MiB compressed/expanded XML, 500,000 XML nodes, 256 sequences, 256 tracks
-per kind and 100,000 timeline items. A traversal budget also accounts for repeated references and
-text size; diagnostics are capped at 1,024 entries plus a truncation notice. Clips with nonpositive
+Input is bounded to 64 MiB compressed gzip and 512 MiB plain/expanded XML, 16,000,000 XML nodes,
+256 sequences, 256 tracks per kind and 100,000 timeline items. The traversal budget is the greater
+of 5,000,000 units and 64 times the parsed node count. Each visited subtree charges its node count
+plus one unit per 64 bytes, including repeated references and caption payloads; increasing document
+capacity does not exempt repeated work. Diagnostics are capped at 1,024 entries plus a truncation
+notice. Large XML still requires substantial memory and parses synchronously. Clips with nonpositive
 timeline duration, non-finite speed or speed outside 0.001–1000, or inverted/unsupported source
 ranges are skipped with a warning naming the clip. Other clips keep their original timeline
-positions; skipped clips can leave gaps. DTD/entity expansion, duplicate IDs, negative/non-integer
+positions; skipped clips can leave gaps. A transition whose end precedes its start is skipped with
+a warning, preserving its clip and any valid transition. DTD/entity expansion, duplicate IDs, negative/non-integer
 timeline or source ticks, non-numeric speeds, cyclic nesting and nesting deeper than 64 levels
 still produce errors. The referenced graph is validated before unsupported clips are removed,
 so skipping a clip does not bypass the corruption or resource-limit checks. A failed import removes only
 its newly created destination and leaves the editor project unchanged.
 
+Open workflow issues: probing, copying and explicitly requested hashing are synchronous and can
+block the caller on large inputs. Default linked import avoids the full-file SHA-256 pass;
+formats without streaming openers may still be read in full for probing. Imports without an
+explicit `destination` write beside the source project; the destination-prompt policy and
+background-job dispatch remain follow-up work. These checks do
+not ask for consent for each valid media reference, and do not verify rendered appearance.
+
 ## Regression and private-corpus checks
 
 ```sh
 cargo test --locked -p filmcraft-engine -p filmcraft-interchange --lib premiere
+# Explicit capacity checks: generated 150 MiB XML, 83 sequences, no private media.
+# Run separately to measure each process's peak RSS (on macOS, /usr/bin/time -l).
+cargo test --locked -p filmcraft-interchange --lib synthetic_150_mib_plain_import -- --ignored --nocapture
+cargo test --locked -p filmcraft-interchange --lib synthetic_150_mib_gzip_import -- --ignored --nocapture
 FILMCRAFT_PREMIERE_CORPUS=/path/to/local-manifest.json \
   cargo test --locked -p filmcraft-engine -p filmcraft-interchange --lib premiere_private_corpus -- --ignored --nocapture
 ```
@@ -100,7 +148,8 @@ it does not override the file's rate. When omitted, rates are recorded without a
 The test copies
 projects under `target/premiere-corpus/`, imports with linked media through a headless engine
 session without registering platform hardware, verifies source/project hashes and offline counts,
-and saves/reopens each result. Its private result JSON stays under `target/`. Only hand-written
+and saves/reopens each result. Media SHA-256 is explicitly inspected before and after save/reopen;
+linked provenance must remain unhashed throughout. Its private result JSON stays under `target/`. Only hand-written
 synthetic XML is committed in the regression tests; never add corpus projects or media paths.
 
 

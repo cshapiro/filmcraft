@@ -1,8 +1,13 @@
-//! Premiere project reader, based on llm-video-editor's `premiere.py` and user-owned XML structure.
+//! Premiere project reader, based on the author's [MIT-licensed][python-license] LLM Video Editor
+//! [`premiere.py`][python-parser] and user-owned XML structure.
 //! No Adobe application code, proprietary documentation or assets were consulted or copied.
 //! MIT OR Apache-2.0. Unsupported features remain in the source snapshot
 //! and are reported; this is not a promise of pixel-identical Premiere rendering.
+//!
+//! [python-parser]: https://github.com/willluecke/llm-video-editor/blob/1539ae2be12c0a783df86182dffb08dabef25ba1/src/video_pipeline/premiere.py
+//! [python-license]: https://github.com/willluecke/llm-video-editor/blob/1539ae2be12c0a783df86182dffb08dabef25ba1/LICENSE
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 
@@ -19,8 +24,9 @@ use crate::common::{Builder, MediaSpec, empty_sequence, set_param, settings_for}
 use crate::xml::{child, child_text};
 use crate::{Error, ImportOptions, Imported, Report, Result};
 
-pub const MAX_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
-const MAX_NODES: u32 = 500_000;
+pub const MAX_DOCUMENT_BYTES: usize = 512 * 1024 * 1024;
+const MAX_COMPRESSED_BYTES: usize = 64 * 1024 * 1024;
+const MAX_NODES: u32 = 16_000_000;
 const MAX_TRACKS: usize = 256;
 const MAX_SEQUENCES: usize = 256;
 
@@ -44,6 +50,10 @@ mod motion;
 
 #[path = "premiere_audio.rs"]
 mod audio;
+
+#[cfg(test)]
+#[path = "premiere_limits_tests.rs"]
+mod limits_tests;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Document {
@@ -124,7 +134,7 @@ fn limited_report(report: &mut Report, level: crate::Level, message: String) {
 }
 fn spend(work_left: &mut usize, node: Node<'_, '_>) -> Result<()> {
     *work_left = work_left
-        .checked_sub(node.descendants().count().saturating_add(node.range().len() / 64))
+        .checked_sub(node.descendants().len().saturating_add(node.range().len() / 64))
         .ok_or_else(|| error("object graph traversal exceeds import work limit"))?;
     Ok(())
 }
@@ -252,20 +262,43 @@ fn caption_text(encoded: &str) -> Option<String> {
     found
 }
 
+fn input_limit(header: &[u8]) -> (usize, &'static str) {
+    if header.starts_with(&[0x1f, 0x8b]) {
+        (MAX_COMPRESSED_BYTES, "compressed project exceeds 64 MiB input limit")
+    } else {
+        (MAX_DOCUMENT_BYTES, "project exceeds 512 MiB input limit")
+    }
+}
+
+/// Read caller-supplied input with the same gzip/plain caps as the slice API. Reads at most
+/// the applicable limit plus one byte, even when metadata is unavailable or the input grows.
+pub fn read_input(mut reader: impl Read) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    reader.by_ref().take(2).read_to_end(&mut bytes).map_err(|e| error(format!("project input: {e}")))?;
+    let (limit, message) = input_limit(&bytes);
+    reader.take((limit + 1 - bytes.len()) as u64).read_to_end(&mut bytes).map_err(|e| error(format!("project input: {e}")))?;
+    if bytes.len() > limit {
+        return Err(error(message));
+    }
+    Ok(bytes)
+}
+
 /// Decode bounded gzip/plain XML without any filesystem or network access.
 pub fn read(bytes: &[u8], base_dir: Option<&str>, report: &mut Report) -> Result<Document> {
-    if bytes.len() > MAX_DOCUMENT_BYTES {
-        return Err(error("project exceeds 64 MiB input limit"));
+    let (limit, message) = input_limit(bytes);
+    if bytes.len() > limit {
+        return Err(error(message));
     }
-    let mut expanded = Vec::new();
-    if bytes.starts_with(&[0x1f, 0x8b]) {
+    let expanded = if bytes.starts_with(&[0x1f, 0x8b]) {
+        let mut expanded = Vec::new();
         flate2::read::MultiGzDecoder::new(bytes).take(MAX_DOCUMENT_BYTES as u64 + 1).read_to_end(&mut expanded).map_err(|e| error(format!("gzip: {e}")))?;
+        if expanded.len() > MAX_DOCUMENT_BYTES {
+            return Err(error("expanded project exceeds 512 MiB limit"));
+        }
+        Cow::Owned(expanded)
     } else {
-        expanded.extend_from_slice(bytes);
-    }
-    if expanded.len() > MAX_DOCUMENT_BYTES {
-        return Err(error("expanded project exceeds 64 MiB limit"));
-    }
+        Cow::Borrowed(bytes)
+    };
     let xml = std::str::from_utf8(&expanded).map_err(|e| error(e.to_string()))?;
     let doc = roxmltree::Document::parse_with_options(xml, roxmltree::ParsingOptions { nodes_limit: MAX_NODES, ..Default::default() })
         .map_err(|e| error(e.to_string()))?;
@@ -313,7 +346,9 @@ pub fn read(bytes: &[u8], base_dir: Option<&str>, report: &mut Report) -> Result
     for title in &ambiguous {
         media.remove(title);
     }
-    let mut work_left = 5_000_000usize;
+    // Scale with real document structure, not repeated references. Every visit still spends
+    // subtree nodes and bytes, so a small document cannot request unbounded repeated decoding.
+    let mut work_left = doc.descendants().len().saturating_mul(64).max(5_000_000);
     let mut links = BTreeMap::new();
     for group in root.children().filter(|n| n.has_tag_name("Link")) {
         spend(&mut work_left, group)?;
@@ -468,7 +503,21 @@ pub fn read(bytes: &[u8], base_dir: Option<&str>, report: &mut Report) -> Result
                                 );
                             }
                             if is_text {
-                                text = value(c, "InstanceName").map(|s| s.replace('\r', "\n"));
+                                // User-owned XML stores Source Text in parameter 1. InstanceName
+                                // is the renameable layer label, not the displayed text.
+                                for ptr in c.descendants().filter(|n| n.has_tag_name("Param")) {
+                                    let Some(p) = referred(Some(ptr), &ids, "ObjectRef") else { continue };
+                                    spend(&mut work_left, p)?;
+                                    if child_text(p, "ParameterID") == Some("1")
+                                        && !child_text(p, "IsTimeVarying").is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                                        && let Some(v) = child(p, "StartKeyframeValue").filter(|v| v.attribute("Encoding") == Some("base64"))
+                                    {
+                                        text = v.text().and_then(caption_text);
+                                    }
+                                }
+                                if text.is_none() {
+                                    warning(report, format!("{label}: static Source Text unavailable; layer name not used as visible text"));
+                                }
                             }
                             if matches!(match_name, Some("AE.ADBE Motion" | "ADBE Motion")) {
                                 for ptr in c.descendants().filter(|n| n.has_tag_name("Param")) {
@@ -509,11 +558,13 @@ pub fn read(bytes: &[u8], base_dir: Option<&str>, report: &mut Report) -> Result
                     let mut transitions = Vec::new();
                     for key in ["HeadTransition", "TailTransition"] {
                         if let Some(t) = referred(descendant(item, key), &ids, "ObjectRef") {
+                            spend(&mut work_left, t)?;
                             let name = value(t, "DisplayName").unwrap_or("Transition").to_string();
                             let start = signed_ticks(value(t, "Start"), Tick::ZERO)?;
                             let end = signed_ticks(value(t, "End"), start)?;
                             if end < start {
-                                return Err(error("transition end precedes start"));
+                                warning(report, format!("{label}: {name} end precedes start; transition skipped"));
+                                continue;
                             }
                             transitions.push(SourceTransition {
                                 object_id: t.attribute("ObjectID").unwrap_or("").to_string(),
@@ -1089,10 +1140,57 @@ mod tests {
         assert_eq!(caption_text(&base64::engine::general_purpose::STANDARD.encode(bytes)).as_deref(), Some("Maybe it fits\nIt’s a 2 + 2."));
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         let chunk = [b' '; 65536];
-        for _ in 0..1025 {
+        for _ in 0..=MAX_DOCUMENT_BYTES / chunk.len() {
             gz.write_all(&chunk).unwrap();
         }
-        assert!(import(&gz.finish().unwrap(), &ImportOptions::default(), None).unwrap_err().to_string().contains("64 MiB"));
+        assert!(import(&gz.finish().unwrap(), &ImportOptions::default(), None).unwrap_err().to_string().contains("expanded project exceeds 512 MiB"));
+    }
+    #[test]
+    fn caption_payload_truncation_bit_flips_and_size_limits_never_panic() {
+        let mut bytes = b"synthetic-envelope".to_vec();
+        let text = "Caption\rUnicode: é 日本";
+        bytes.extend((text.len() as u32).to_le_bytes());
+        bytes.extend(text.as_bytes());
+        bytes.push(0);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        assert_eq!(caption_text(&encoded).as_deref(), Some("Caption\nUnicode: é 日本"));
+        for end in 0..=encoded.len() {
+            assert!(std::panic::catch_unwind(|| caption_text(&encoded[..end])).is_ok());
+        }
+        for index in 0..bytes.len() {
+            for bit in 0..8 {
+                let mut mutated = bytes.clone();
+                mutated[index] ^= 1 << bit;
+                let encoded = base64::engine::general_purpose::STANDARD.encode(mutated);
+                assert!(std::panic::catch_unwind(|| caption_text(&encoded)).is_ok());
+            }
+        }
+        for index in 0..encoded.len() {
+            let mut mutated = encoded.as_bytes().to_vec();
+            mutated[index] ^= 1;
+            let mutated = String::from_utf8(mutated).unwrap();
+            assert!(std::panic::catch_unwind(|| caption_text(&mutated)).is_ok());
+        }
+        for payload in ["A".repeat(1024 * 1024 + 1), " ".repeat(1024 * 1024 + 1)] {
+            assert_eq!(std::panic::catch_unwind(|| caption_text(&payload)).unwrap(), None);
+        }
+    }
+    #[test]
+    fn inverted_transition_is_skipped_without_losing_clip_or_valid_transition() {
+        let xml = fixture()
+            .replace("<SubClip ObjectRef=\"21\"/>", "<SubClip ObjectRef=\"21\"/><HeadTransition ObjectRef=\"bad\"/><TailTransition ObjectRef=\"good\"/>")
+            .replace(
+                "</PremiereData>",
+                r#"<Transition ObjectID="bad"><DisplayName>Bad fade</DisplayName><Start>2</Start><End>1</End></Transition>
+<Transition ObjectID="good"><DisplayName>Cross Dissolve</DisplayName><Start>0</Start><End>25401600000</End></Transition></PremiereData>"#,
+            );
+        let (fragment, tree, report) = import(xml.as_bytes(), &ImportOptions::default(), None).unwrap();
+        assert_eq!(tree.sequences[0].tracks[0].items.len(), 1);
+        let transitions = &tree.sequences[0].tracks[0].items[0].transitions;
+        assert_eq!(transitions.len(), 1);
+        assert!(!transitions[0].head);
+        assert_eq!(fragment.project.sequence(fragment.sequences[0]).unwrap().video_tracks[0].transitions.len(), 1);
+        assert!(report.entries.iter().any(|e| e.message.contains("camera.mov") && e.message.contains("Bad fade") && e.message.contains("transition skipped")));
     }
     #[test]
     fn native_nested_sequences_mute_and_edge_fades_are_preserved() {
@@ -1176,7 +1274,14 @@ mod tests {
             "<SubClip ObjectRef=\"21\"/>",
             "<SubClip ObjectRef=\"21\"/><ComponentOwner><Components ObjectRef=\"text-chain\"/></ComponentOwner>",
         ).replace("</PremiereData>", r#"<VideoComponentChain ObjectID="text-chain"><Components><Component ObjectRef="text-component"/></Components></VideoComponentChain>
-<VideoFilterComponent ObjectID="text-component"><Component><DisplayName>Texto</DisplayName><InstanceName>Hola mundo</InstanceName></Component><MatchName>AE.ADBE Text</MatchName></VideoFilterComponent></PremiereData>"#);
+<VideoFilterComponent ObjectID="text-component"><Component><DisplayName>Texto</DisplayName><InstanceName>Renamed layer</InstanceName><Params><Param ObjectRef="source-text"/></Params></Component><MatchName>AE.ADBE Text</MatchName></VideoFilterComponent>
+<ArbVideoComponentParam ObjectID="source-text"><IsTimeVarying>false</IsTimeVarying><ParameterID>1</ParameterID><Name>Texto de origen</Name><StartKeyframeValue Encoding="base64">SOURCE_TEXT</StartKeyframeValue></ArbVideoComponentParam></PremiereData>"#);
+        // Hand-written envelope: length-prefixed UTF-8, independent of the layer's name.
+        let mut bytes = b"synthetic-envelope".to_vec();
+        bytes.extend(10u32.to_le_bytes());
+        bytes.extend(b"Hola mundo\0");
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let xml = xml.replace("SOURCE_TEXT", &encoded);
         let (fragment, tree, _) = import(xml.as_bytes(), &ImportOptions::default(), None).unwrap();
         assert_eq!(tree.sequences[0].tracks[0].items[0].text.as_deref(), Some("Hola mundo"));
         assert!(fragment.project.items.values().any(|i| matches!(i.kind, ItemKind::Graphic { .. })));
@@ -1190,6 +1295,13 @@ mod tests {
         let unknown = xml.replace("AE.ADBE Text", "custom.not-text").replace("Texto", "Text");
         let (_, tree, _) = import(unknown.as_bytes(), &ImportOptions::default(), None).unwrap();
         assert!(tree.sequences[0].tracks[0].items[0].text.is_none());
+        for xml in
+            [xml.replace(&encoded, "invalid!"), xml.replace("<IsTimeVarying>false", "<IsTimeVarying>true"), xml.replace("<ParameterID>1", "<ParameterID>99")]
+        {
+            let (_, tree, report) = import(xml.as_bytes(), &ImportOptions::default(), None).unwrap();
+            assert!(tree.sequences[0].tracks[0].items[0].text.is_none());
+            assert!(report.mentions("Source Text") && report.mentions("layer name"));
+        }
     }
     #[test]
     fn speed_reads_stored_ratio_not_frame_grid_durations() {
