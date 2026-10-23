@@ -172,7 +172,11 @@ fn premiere_link_copy_save_reopen_and_undo_preserve_input() {
         let media = &provenance.imports[0].media[0];
         let imported = PathBuf::from(&media.imported_path);
         assert_eq!(hash_file(&imported).unwrap(), source_hash);
-        assert_eq!(imported == source, mode == "link");
+        // Stored interchange paths deliberately omit Windows verbatim prefixes. Compare the
+        // actual files rather than two spellings of the same path.
+        assert_eq!(imported.canonicalize().unwrap() == source.canonicalize().unwrap(), mode == "link");
+        #[cfg(target_os = "windows")]
+        assert!(!media.imported_path.starts_with(r"\\?\"));
         let saved = fixture.0.join(format!("{mode}.fcproj"));
         session.execute("file.saveAs", json!({"path":saved})).unwrap();
         let bytes = std::fs::read(&saved).unwrap();
@@ -398,4 +402,16 @@ fn premiere_plain_xml_larger_than_64_mib_reaches_parser_and_snapshot() {
     assert_eq!(imports.len(), 1);
     assert_eq!(imports[0].source_sha256, before.0);
     assert_eq!(hash_file(std::path::Path::new(&imports[0].snapshot_path)).unwrap(), before);
+}
+
+#[test]
+fn missing_import_destination_never_replaces_project_or_writes_beside_source() {
+    let fixture = Fixture::new();
+    let source = fixture.0.join("source.prproj");
+    let mut session = Session::default();
+    let before = session.project.clone();
+    assert!(session.execute("premiere.import", json!({"path":source})).is_err());
+    assert!(session.execute("file.import", json!({"paths":[source],"replace":true})).is_err());
+    assert_eq!(session.project.as_ref(), before.as_ref());
+    assert!(!fixture.0.join("source.filmcraft-import-1").exists());
 }
