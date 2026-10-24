@@ -31,6 +31,36 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn shared_premiere_media_survives_link_copy_undo_and_reopen() {
+    let fixture = Fixture::new();
+    let source = fixture.0.join("source.prproj");
+    let xml = std::fs::read_to_string(&source).unwrap()
+        .replace("</TrackGroups>", "<TrackGroup><Second ObjectRef=\"ag\"/></TrackGroup></TrackGroups>")
+        .replace("</PremiereData>", r#"<AudioTrackGroup ObjectID="ag"><TrackGroup><Tracks><Track ObjectURef="at"/></Tracks></TrackGroup></AudioTrackGroup><AudioClipTrack ObjectUID="at"><ClipTrack><Track><Index>0</Index></Track><ClipItems><TrackItems><TrackItem ObjectRef="ai"/></TrackItems></ClipItems></ClipTrack></AudioClipTrack><AudioClipTrackItem ObjectID="ai"><ClipTrackItem><TrackItem><Start>0</Start><End>254016000000</End></TrackItem><SubClip ObjectRef="3"/></ClipTrackItem></AudioClipTrackItem></PremiereData>"#);
+    std::fs::write(&source, xml).unwrap();
+    let original = std::fs::read(&source).unwrap();
+    for mode in ["link", "copy"] {
+        let mut s = Session::default();
+        let result = s.execute("premiere.import", json!({"path":source,"destination":fixture.0.join(mode),"mediaMode":mode})).unwrap();
+        assert_eq!(result["offlineMedia"], json!([]));
+        assert_eq!(s.project.items.values().filter(|i| i.as_media().is_some()).count(), 1);
+        assert_eq!(s.project.workflow.as_ref().unwrap().imports[0].media.len(), 1);
+        let seq = s.active_sequence().unwrap();
+        assert_eq!(seq.video_tracks[0].items[0].item, seq.audio_tracks[0].items[0].item);
+        s.undo().unwrap();
+        assert!(s.project.items.is_empty());
+        s.redo().unwrap();
+        let saved = fixture.0.join(format!("{mode}.fcproj"));
+        s.execute("file.saveAs", json!({"path":saved})).unwrap();
+        s.execute("file.open", json!({"path":saved})).unwrap();
+        assert_eq!(s.project.items.values().filter(|i| i.as_media().is_some()).count(), 1);
+        let seq = s.active_sequence().unwrap();
+        assert_eq!(seq.video_tracks[0].items[0].item, seq.audio_tracks[0].items[0].item);
+    }
+    assert_eq!(std::fs::read(source).unwrap(), original);
+}
+
+#[test]
 fn open_premiere_replaces_only_after_success_and_saves_as_filmcraft() {
     let fixture = Fixture::new();
     let source = fixture.0.join("source.PrPrOj");

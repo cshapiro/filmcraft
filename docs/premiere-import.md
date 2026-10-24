@@ -20,6 +20,11 @@ to the current project. Save current edits before opening a Premiere project. Ca
 picker or a failed conversion preserves the current project. Save/Save As writes `.fcproj`, never
 overwrites the Premiere source, and initially suggests the chosen import folder.
 Headless `file.open` accepts the same explicit destination and media-mode options as `premiere.import`.
+Within one import, audio and video uses of the same resolved media path share one Project-bin
+entry across tracks and sequences. Their timeline clips, links, effects and timing stay separate.
+Offline media retains both audio/video hints and the longest referenced source duration. Distinct
+paths and unresolved source objects remain distinct. Repeated Import commands still add separate
+imports; Open Project converts into a separate project. Existing saved projects are not deduplicated.
 The first suggestion is the operating system's Documents directory under `FilmCraft/Projects`;
 after selection, the chosen parent is remembered in user preferences. Each project gets a new,
 unused `<source>.filmcraft-import-N` subfolder there. Existing files, folders and symlinks are not
