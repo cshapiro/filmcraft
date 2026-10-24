@@ -21,6 +21,7 @@ pub mod mask;
 pub mod mixer;
 pub mod multicam;
 pub mod narration;
+pub mod project_link;
 pub mod transcript;
 pub mod vtransition;
 
@@ -1261,6 +1262,9 @@ pub struct Project {
     /// instructions for whoever opens it next, frame numbers and the like. Schema v15.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
+    /// Persistent cross-application project references, keyed by their media item. Schema v16.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub project_links: BTreeMap<ItemId, project_link::ProjectLink>,
 }
 
 /// How a sequence is shown in the Timeline panel: its zoom, scroll position and track heights.
@@ -1365,6 +1369,7 @@ impl Project {
             source_graphics: BTreeMap::new(),
             narrations: BTreeMap::new(),
             notes: String::new(),
+            project_links: BTreeMap::new(),
         }
     }
 

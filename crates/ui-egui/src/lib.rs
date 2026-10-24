@@ -1364,7 +1364,7 @@ impl FilmcraftApp {
                     .iter()
                     .chain(filmcraft_media::AUDIO_EXTENSIONS)
                     .chain(filmcraft_media::STILL_EXTENSIONS)
-                    .chain(&["srt", "vtt", "scc", "edl", "xml", "fcpxml", "otio", "aaf", "omf"])
+                    .chain(&["srt", "vtt", "scc", "edl", "xml", "fcpxml", "otio", "aaf", "omf", "ecproj"])
                     .copied()
                     .collect();
                 let bin = params.get("bin").cloned();
@@ -1814,6 +1814,9 @@ impl FilmcraftApp {
         panels::metadata::follow_selection(self);
         self.frames.set_context(&ctx);
         self.session.poll_persistence();
+        if !self.session.project.project_links.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
         panels::trim_monitor::advance(self, &ctx);
         if self.session.persistence.is_some() && self.session.is_dirty() {
             // Keep polling the auto-save worker (status, "also save the project" results).

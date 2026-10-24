@@ -894,3 +894,26 @@ fn menu_bar_menus_use_the_13pt_menu_text() {
         assert_eq!(font.size, 13.0, "`{label}` in the File menu");
     }
 }
+
+#[test]
+fn linked_projects_dialog_is_automatable_and_unconfigured_import_fails() {
+    let mut d = Driver::with(Session::default());
+    filmcraft_ui_egui::panels::project_links::open(&d.harness.ctx);
+    d.frames(3);
+    for id in [
+        "linkedProjects.renderer",
+        "linkedProjects.enable",
+        "linkedProjects.path",
+        "linkedProjects.inspect",
+        "linkedProjects.import",
+        "linkedProjects.refresh",
+        "linkedProjects.cancel",
+        "linkedProjects.bakePath",
+    ] {
+        assert!(d.has(id), "missing {id}");
+    }
+    d.click("linkedProjects.inspect");
+    assert!(d.app().session.project_links.adapters.is_empty());
+    assert!(d.app().session.project.project_links.is_empty());
+    d.snapshot("linked-projects-dialog", None);
+}

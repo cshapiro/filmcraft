@@ -1,5 +1,7 @@
 # Roadmap detail
 
+Experimental contribution (2026-10-24, #388): saved-project links with an EffectCraft CLI adapter are implemented on this branch. Full-composition background cache refresh, errors, relink and bake/restore are in scope; frame serving, used ranges, web/Flatpak packaging and other app adapters remain. This is a draft prototype, not a readiness or parity-score increase. See [linked-projects](linked-projects.md).
+
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (M8: Fujifilm F-Log / F-Log2 / F-Log2 C colour spaces) · **Target:** Adobe Premiere Pro 2026 (26.5.2)
 
 Forward-looking plan: milestones with status, the current focus and what's next, with estimates in
