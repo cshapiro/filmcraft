@@ -1536,10 +1536,21 @@ fn build() -> Vec<CommandSpec> {
             }
             Ok(r)
         }),
-        cmd!("file.open", "Open Project…", ["File"], Some("Cmd+O"), r#"{"path":str}"#, always, |s, p| {
-            let path = str_p(p, "path").ok_or_else(|| bad("file.open", "need `path`"))?.to_string();
-            open_project(s, &path)
-        }),
+        cmd!(
+            "file.open",
+            "Open Project…",
+            ["File"],
+            Some("Cmd+O"),
+            r#"{"path":str,"destination":str?,"destinationRoot":str?,"mediaMode":"link|copy"?} (.prproj requires a destination and saved current project)"#,
+            always,
+            |s, p| {
+                let path = str_p(p, "path").ok_or_else(|| bad("file.open", "need `path`"))?.to_string();
+                if crate::premiere::is_project(&path) {
+                    return open_premiere_project(s, p);
+                }
+                open_project(s, &path)
+            }
+        ),
         cmd!("file.recover", "Recover Unsaved Changes…", ["File"], None, r#"{"id":str?}"#, has_recovery, |s, p| recover(s, str_p(p, "id"))),
         cmd!("file.discardRecovery", "Discard Unsaved Changes", [], None, r#"{"id":str?,"all":bool?}"#, has_recovery, |s, p| {
             let all = bool_p(p, "all").unwrap_or(false);
@@ -4427,6 +4438,30 @@ fn install_project(s: &mut Session, proj: filmcraft_project::Project, path: Opti
     s.loaded_schema = filmcraft_format::SCHEMA_VERSION;
     s.events.push(crate::Event::ProjectChanged { revision: s.revision });
     crate::project_tools::warn_untrusted_scratch(s);
+}
+
+fn open_premiere_project(s: &mut Session, params: &Value) -> Result<Value> {
+    if s.is_dirty() {
+        return Err(bad("file.open", "Save the current project before opening a Premiere project"));
+    }
+    crate::premiere::validate_destination(params)?;
+    // Parse, probe and write the owned snapshot before replacing any live session state.
+    let mut staged = Session::new(s.services.clone());
+    staged.prefs = s.prefs.clone();
+    *staged.media.openers.write().unwrap_or_else(|e| e.into_inner()) = s.media.openers.read().unwrap_or_else(|e| e.into_inner()).clone();
+    staged.media.set_use_proxies(s.media.use_proxies());
+    let result = crate::premiere::import(&mut staged, params)?;
+    if let Some(name) = str_p(params, "path").and_then(project_name_for) {
+        name_project(std::sync::Arc::make_mut(&mut staged.project), name);
+    }
+    install_project(s, (*staged.project).clone(), None, false);
+    s.previews.reset_temp();
+    s.state = staged.state;
+    s.media = staged.media;
+    if let Some(seq) = s.state.active_sequence {
+        s.events.push(crate::Event::OpenSequence(seq));
+    }
+    Ok(result)
 }
 
 fn open_project(s: &mut Session, path: &str) -> Result<Value> {

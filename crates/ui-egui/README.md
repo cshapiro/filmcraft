@@ -3,6 +3,11 @@
 The egui frontend draws panels and dialogs, and dispatches project changes through the engine.
 Interactive controls keep stable automation ids regardless of the interface language.
 
+Open Project accepts FilmCraft `.fcproj` and Premiere `.prproj`. Premiere opens share Import's
+remembered destination picker and convert into a separate unsaved project after successful
+conversion. Save current edits first; cancellation and conversion errors preserve the current
+project. Save stays FilmCraft-only. Synthetic engine and picker tests cover these paths.
+
 ## Transition drop previews
 
 Dragging a video or audio transition over a compatible clip shows its actual time span, the

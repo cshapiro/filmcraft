@@ -9,6 +9,11 @@ There is no `cargo xtask scorecard` or `cargo xtask parity` yet ([G7](gaps.md#g7
 
 ## Current focus
 
+Premiere folder-picker follow-up: Open Project accepts `.prproj` through the same destination
+selection as Import, converting into a separate unsaved FilmCraft project. Cancellation and
+failed conversions preserve the current project; existing edits must be saved first. This
+changes the entry point only; importer fidelity limits remain in [premiere-import.md](premiere-import.md).
+
 In order. Each item links to its gap entry, which says what "done" means.
 
 1. **Stop launch crashes and add pull-request CI** ([G4](gaps.md#g4-crashes-at-start-up-and-no-test-ci-on-pull-requests)): `cargo xtask ci` on macOS, Windows and Linux for every PR; old-macOS and Intel-GPU start-up. 40–80 h.

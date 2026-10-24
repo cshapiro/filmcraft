@@ -14,6 +14,12 @@ filmcraft-cli --save-as /path/to/episode.fcproj exec premiere.import \
 
 The same JSON command works through MCP `command_run` or the desktop control channel.
 Desktop File → Import and OS file drops ask for a parent folder before importing any files.
+File → Open Project also accepts `.prproj` (including uppercase extensions), then asks for the
+same destination. Open converts into a separate, unsaved FilmCraft project; Import adds sequences
+to the current project. Save current edits before opening a Premiere project. Canceling either
+picker or a failed conversion preserves the current project. Save/Save As writes `.fcproj`, never
+overwrites the Premiere source, and initially suggests the chosen import folder.
+Headless `file.open` accepts the same explicit destination and media-mode options as `premiere.import`.
 The first suggestion is the operating system's Documents directory under `FilmCraft/Projects`;
 after selection, the chosen parent is remembered in user preferences. Each project gets a new,
 unused `<source>.filmcraft-import-N` subfolder there. Existing files, folders and symlinks are not

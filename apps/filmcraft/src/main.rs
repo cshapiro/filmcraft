@@ -322,7 +322,7 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
         }));
         app.hooks.pick_open_project = Some(Box::new(|| {
             rfd::FileDialog::new()
-                .add_filter(filmcraft_ui_egui::i18n::t("FilmCraft Project"), &file_filters::extensions(&["fcproj"]))
+                .add_filter(filmcraft_ui_egui::i18n::t("Projects"), &project_open_patterns())
                 .pick_file()
                 .map(|p| p.to_string_lossy().to_string())
         }));
@@ -441,9 +441,8 @@ fn agent_event_loop(agent: bool) -> Option<eframe::EventLoopBuilderHook> {
 /// A save dialog that respects a suggested project folder.
 fn project_save_dialog(name: &str, filter: &str) -> rfd::FileDialog {
     let path = std::path::Path::new(name);
-    let dialog = rfd::FileDialog::new()
-        .add_filter(filter, &file_filters::extensions(&["fcproj"]))
-        .set_file_name(path.file_name().map_or(name.into(), |name| name.to_string_lossy()));
+    let dialog =
+        rfd::FileDialog::new().add_filter(filter, &project_save_patterns()).set_file_name(path.file_name().map_or(name.into(), |name| name.to_string_lossy()));
     match path.parent().filter(|parent| parent.is_dir()) {
         Some(parent) => dialog.set_directory(parent),
         None => dialog,
@@ -459,7 +458,8 @@ fn run_dialog_off_thread(dialog: filmcraft_ui_egui::native_dialogs::FileDialog) 
     let t = |s: &str| filmcraft_ui_egui::i18n::t(s).to_string();
     let media = t("Media");
     let project = t("FilmCraft Project");
-    let project_exts = project_patterns();
+    let project_exts = project_open_patterns();
+    let open_project = t("Projects");
     let dialog = prepare_dialog(dialog);
     let (tx, rx) = std::sync::mpsc::channel();
     let spawned = std::thread::Builder::new().name("file-dialog".into()).spawn(move || {
@@ -471,7 +471,7 @@ fn run_dialog_off_thread(dialog: filmcraft_ui_egui::native_dialogs::FileDialog) 
                 }
                 FileDialog::OpenFile { filter, exts } => rfd::FileDialog::new().add_filter(&filter, &exts).pick_file().map(path).into_iter().collect(),
                 FileDialog::Relink { exts, .. } => rfd::FileDialog::new().add_filter(&media, &exts).pick_file().map(path).into_iter().collect(),
-                FileDialog::OpenProject => rfd::FileDialog::new().add_filter(&project, &project_exts).pick_file().map(path).into_iter().collect(),
+                FileDialog::OpenProject => rfd::FileDialog::new().add_filter(&open_project, &project_exts).pick_file().map(path).into_iter().collect(),
                 FileDialog::SaveProject { name } => project_save_dialog(&name, &project).save_file().map(path).into_iter().collect(),
                 FileDialog::SaveAs { filter, exts, name } => {
                     rfd::FileDialog::new().add_filter(&filter, &exts).set_file_name(name).save_file().map(path).into_iter().collect()
@@ -516,14 +516,26 @@ fn prepare_dialog(dialog: filmcraft_ui_egui::native_dialogs::FileDialog) -> film
     }
 }
 
-/// The project dialogs' filter patterns (`EDIT.FCPROJ` included).
-#[cfg(target_os = "linux")]
-fn project_patterns() -> Vec<String> {
+/// Opening accepts native and Premiere projects; saving only writes FilmCraft projects.
+fn project_open_patterns() -> Vec<String> {
+    file_filters::extensions(&["fcproj", "prproj"])
+}
+
+/// The save dialog's filter patterns (`EDIT.FCPROJ` included).
+fn project_save_patterns() -> Vec<String> {
     file_filters::extensions(&["fcproj"])
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn open_project_filter_includes_premiere() {
+        let patterns = super::project_open_patterns();
+        assert!(patterns.iter().any(|ext| ext == "fcproj"));
+        assert!(patterns.iter().any(|ext| ext == "prproj"));
+        assert_eq!(super::project_save_patterns(), super::file_filters::extensions(&["fcproj"]));
+    }
+
     /// Start-up registers the hardware decoders whether or not anything is logged (no logger is
     /// installed here, as in a normal run).
     #[test]
@@ -558,7 +570,7 @@ mod tests {
             assert_eq!(exts.first().map(String::as_str), Some("mp4"), "the literal extension stays first (save suffix)");
             assert!(exts.iter().any(|e| e == "[mM][pP]4"), "{exts:?}");
         }
-        let project = super::project_patterns();
+        let project = super::project_save_patterns();
         assert_eq!(project.first().map(String::as_str), Some("fcproj"));
         assert!(project.iter().any(|e| e == "[fF][cC][pP][rR][oO][jJ]"), "{project:?}");
     }

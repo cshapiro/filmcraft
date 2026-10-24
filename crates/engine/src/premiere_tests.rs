@@ -31,6 +31,63 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn open_premiere_replaces_only_after_success_and_saves_as_filmcraft() {
+    let fixture = Fixture::new();
+    let source = fixture.0.join("source.PrPrOj");
+    std::fs::rename(fixture.0.join("source.prproj"), &source).unwrap();
+    let original = std::fs::read(&source).unwrap();
+    let mut s = Session::default();
+    s.execute("file.openDemoProject", json!({})).unwrap();
+    s.execute("file.saveAs", json!({"path":fixture.0.join("previous.fcproj")})).unwrap();
+    let result = s.execute("file.open", json!({"path":source,"destinationRoot":fixture.0})).unwrap();
+    assert_eq!(result["format"], "Premiere");
+    assert_eq!(result["offlineMedia"], json!([]));
+    assert_eq!(s.project.name, "source");
+    assert_eq!(s.project.sequences().count(), 1);
+    assert_eq!(s.state.open_sequences.len(), 1);
+    assert!(s.state.source_item.is_none());
+    assert!(s.is_dirty());
+    assert!(s.path.is_none());
+    assert!(s.history.undo.is_empty());
+    assert!(s.project.workflow.is_some());
+    let converted = fixture.0.join("converted.fcproj");
+    s.execute("file.saveAs", json!({"path":converted})).unwrap();
+    s.execute("file.open", json!({"path":converted})).unwrap();
+    assert!(!s.is_dirty());
+    assert_eq!(s.project.sequences().count(), 1);
+    assert!(s.project.workflow.is_some());
+    assert_eq!(std::fs::read(source).unwrap(), original);
+}
+
+#[test]
+fn open_premiere_failure_or_unsaved_edits_preserves_current_project() {
+    let fixture = Fixture::new();
+    let mut s = Session::default();
+    s.execute("file.newBin", json!({"name":"Keep me"})).unwrap();
+    let before = s.project.clone();
+    let state = s.state.clone();
+    let revision = s.revision;
+    let params = json!({"path":fixture.0.join("source.prproj"),"destination":fixture.0.join("opened")});
+    assert!(s.execute("file.open", params.clone()).unwrap_err().to_string().contains("Save the current project"));
+    assert!(!fixture.0.join("opened").exists());
+    s.saved_revision = s.revision;
+    for options in [
+        json!({"path":fixture.0.join("source.prproj")}),
+        json!({"path":fixture.0.join("missing.prproj"),"destination":fixture.0.join("opened")}),
+        json!({"path":fixture.0.join("bad.prproj"),"destination":fixture.0.join("opened")}),
+        json!({"path":fixture.0.join("source.prproj"),"destination":fixture.0}),
+    ] {
+        std::fs::write(fixture.0.join("bad.prproj"), b"invalid project").unwrap();
+        assert!(s.execute("file.open", options).is_err());
+        assert_eq!(s.project.as_ref(), before.as_ref());
+        assert_eq!(serde_json::to_value(&s.state).unwrap(), serde_json::to_value(&state).unwrap());
+        assert_eq!(s.revision, revision);
+        assert!(s.path.is_none());
+        assert!(!fixture.0.join("opened").exists());
+    }
+}
+
+#[test]
 fn premiere_non_media_references_are_never_hashed_or_copied() {
     struct ReadCounter(AtomicU64);
     impl crate::Services for ReadCounter {

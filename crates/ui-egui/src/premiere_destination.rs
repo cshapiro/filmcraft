@@ -11,12 +11,23 @@ impl FilmcraftApp {
     /// Collect the destination before importing anything, including mixed file batches.
     /// A caller supplying an explicit destination bypasses the native picker.
     pub(crate) fn import_paths(&mut self, params: Value, pointer: Option<egui::Pos2>) -> Result<Value, String> {
+        self.choose_premiere_destination("file.import", params, pointer)
+    }
+
+    pub(crate) fn open_project_path(&mut self, params: Value) -> Result<Value, String> {
+        if params.get("path").and_then(Value::as_str).is_some_and(is_premiere) && self.session.is_dirty() {
+            return Err("Save the current project before opening a Premiere project".into());
+        }
+        self.choose_premiere_destination("file.open", params, None)
+    }
+
+    fn choose_premiere_destination(&mut self, command: &'static str, params: Value, pointer: Option<egui::Pos2>) -> Result<Value, String> {
         let paths: Vec<String> = match params.get("paths") {
             Some(value) => serde_json::from_value(value.clone()).map_err(|error| format!("Invalid import paths: {error}"))?,
             None => params.get("path").and_then(Value::as_str).map(str::to_owned).into_iter().collect(),
         };
         if !paths.iter().any(|path| is_premiere(path)) || params.get("destination").is_some() || params.get("destinationRoot").is_some() {
-            return self.finish_path_import(params, pointer);
+            return self.finish_path_import(command, params, pointer);
         }
         let remembered = &self.session.prefs.general.premiere_import_directory;
         let mut at = if remembered.is_empty() {
@@ -42,12 +53,12 @@ impl FilmcraftApp {
             app.session.set_prefs(prefs).map_err(|error| format!("Cannot remember the import folder: {error}"))?;
             let mut params = params;
             params["destinationRoot"] = json!(parent);
-            app.finish_path_import(params, pointer)
+            app.finish_path_import(command, params, pointer)
         })
     }
 
-    fn finish_path_import(&mut self, params: Value, pointer: Option<egui::Pos2>) -> Result<Value, String> {
-        let result = self.session.execute("file.import", params).map_err(|error| error.to_string())?;
+    fn finish_path_import(&mut self, command: &str, params: Value, pointer: Option<egui::Pos2>) -> Result<Value, String> {
+        let result = self.session.execute(command, params).map_err(|error| error.to_string())?;
         self.after_path_import(&result, pointer);
         Ok(result)
     }
@@ -83,6 +94,73 @@ mod tests {
         let source = dir.join("example.prproj");
         std::fs::write(&source, br#"<PremiereData><Sequence ObjectUID="s"><Name>Sequence</Name></Sequence></PremiereData>"#).unwrap();
         (dir, source.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn explicit_menu_open_uses_destination_and_native_projects_skip_the_picker() {
+        let (dir, source) = fixture("menu-open");
+        let mut app = FilmcraftApp::new(Session::default());
+        app.hooks.pick_folder = Some(Box::new(|| panic!("explicit destination must not show a picker")));
+        let result = crate::menus::invoke(&mut app, &egui::Context::default(), "file.open", json!({"path":source,"destinationRoot":dir})).unwrap();
+        assert_eq!(result["format"], "Premiere");
+        let saved = dir.join("converted.fcproj");
+        app.session.execute("file.saveAs", json!({"path":saved})).unwrap();
+        let selected = saved.to_string_lossy().into_owned();
+        app.hooks.pick_open_project = Some(Box::new(move || Some(selected.clone())));
+        app.file_dialog("file.open", &json!({})).unwrap();
+        assert_eq!(app.session.path.as_deref(), saved.to_str());
+        assert!(!app.session.is_dirty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn open_project_uses_the_destination_picker_and_cancellation_is_safe() {
+        let (dir, source) = fixture("open");
+        let mut app = FilmcraftApp::new(Session::default());
+        let before = app.session.project.clone();
+        let selected = source.clone();
+        app.hooks.pick_open_project = Some(Box::new(move || Some(selected.clone())));
+        app.hooks.pick_folder = Some(Box::new(|| None));
+        assert_eq!(app.file_dialog("file.open", &json!({})).unwrap(), Value::Null);
+        assert_eq!(app.session.project.as_ref(), before.as_ref());
+        assert!(!dir.join("example.filmcraft-import-1").exists());
+        let parent = dir.to_string_lossy().into_owned();
+        app.hooks.pick_folder = Some(Box::new(move || Some(parent.clone())));
+        let result = app.file_dialog("file.open", &json!({})).unwrap();
+        assert_eq!(result["format"], "Premiere");
+        assert_eq!(app.session.project.name, "example");
+        assert!(app.session.path.is_none());
+        assert!(dir.join("example.filmcraft-import-1/source.prproj").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn asynchronous_open_project_continues_into_the_destination_picker() {
+        let (dir, source) = fixture("async-open");
+        let mut app = FilmcraftApp::new(Session::default());
+        let (tx_open, rx_open) = std::sync::mpsc::channel();
+        let (tx_folder, rx_folder) = std::sync::mpsc::channel();
+        let mut answers = vec![rx_open, rx_folder].into_iter();
+        let mut calls = 0;
+        app.hooks.run_dialog = Some(Box::new(move |dialog| {
+            if calls == 0 {
+                assert!(matches!(dialog, FileDialog::OpenProject));
+            } else {
+                assert!(matches!(dialog, FileDialog::Folder { .. }));
+            }
+            calls += 1;
+            answers.next().unwrap()
+        }));
+        app.file_dialog("file.open", &json!({})).unwrap();
+        tx_open.send(vec![source]).unwrap();
+        app.poll_native_dialog(&egui::Context::default());
+        assert!(app.native_dialog_open());
+        assert!(app.session.project.workflow.is_none());
+        tx_folder.send(vec![dir.to_string_lossy().into_owned()]).unwrap();
+        app.poll_native_dialog(&egui::Context::default());
+        assert!(!app.native_dialog_open());
+        assert!(app.session.project.workflow.is_some());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
