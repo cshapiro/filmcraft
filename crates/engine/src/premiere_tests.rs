@@ -172,8 +172,7 @@ fn premiere_link_copy_save_reopen_and_undo_preserve_input() {
         let media = &provenance.imports[0].media[0];
         let imported = PathBuf::from(&media.imported_path);
         assert_eq!(hash_file(&imported).unwrap(), source_hash);
-        // Stored interchange paths deliberately omit Windows verbatim prefixes. Compare the
-        // actual files rather than two spellings of the same path.
+        // Stored interchange paths deliberately omit Windows verbatim prefixes.
         assert_eq!(imported.canonicalize().unwrap() == source.canonicalize().unwrap(), mode == "link");
         #[cfg(target_os = "windows")]
         assert!(!media.imported_path.starts_with(r"\\?\"));

@@ -21,7 +21,7 @@ read off files it exports, never from the application itself.
 | OMF | Avid *OMF Interchange Specification* | Version 2.0 (1997) | classes (`HEAD`, `CMOB`, `MMOB`, `SMOB`, `MSLT`, `TRKD`, `SEQU`, `SCLP`, `FILL`, `TRAN`, `EFFE`, `ESLT`, `CVAL`, `VVAL`, `TCCP`, `WAVD`, `AIFD`, `WAVE`, `AIFC`, locators), property and type names |
 | OMF | Apple *Bento Specification* | revision 1.0d5 | container label, TOC encoding, objects / properties / types, references |
 | WAVE / AIFF | Microsoft RIFF WAVE; Apple AIFF 1.3 | — | embedded and separate audio files |
-| Premiere `.prproj` | no public specification; the author's [LLM Video Editor Python parser][python-parser] ([MIT][python-license]) and structural observations of user-owned gzip/XML project files; no Adobe application code, proprietary documentation or other third-party parser consulted | files written by Premiere Pro 25.5 and 25.6 | gzip envelope, object graph (`ObjectID` / `ObjectUID` / `ObjectRef` / `ObjectURef`), sequence identity, track groups and frame rate, clip source chains, exact ticks, media paths, caption text, static Motion `MatchName` / `ParameterID` |
+| Premiere `.prproj` | no public specification; the author's [LLM Video Editor Python parser][python-parser] ([MIT][python-license]) and structural observations of user-owned gzip/XML project files; picture mappings additionally informed by existing FilmCraft PRs #1694 and #495 (see docs/premiere-import.md); no Adobe application code or proprietary documentation consulted | files written by Premiere Pro 25.5 and 25.6 | gzip envelope, object graph (`ObjectID` / `ObjectUID` / `ObjectRef` / `ObjectURef`), sequence identity, track groups and frame rate, clip source chains, exact ticks, media paths, caption text, static Motion `MatchName` / `ParameterID` |
 
 [python-parser]: https://github.com/willluecke/llm-video-editor/blob/1539ae2be12c0a783df86182dffb08dabef25ba1/src/video_pipeline/premiere.py
 [python-license]: https://github.com/willluecke/llm-video-editor/blob/1539ae2be12c0a783df86182dffb08dabef25ba1/LICENSE
@@ -29,7 +29,7 @@ read off files it exports, never from the application itself.
 The other formats' editions are listed in the module docs (`edl`, `fcp7`, `fcpxml`, `otio`, `ale`).
 
 **Invariant — Unicode media URLs:** file URL prefix probes must not panic when their byte boundary
-falls inside a UTF-8 character. Timeline importers use the shared converter; `tests/file_urls.rs`
+falls inside a UTF-8 character. Timeline importers use the shared converter; `tests/it/file_urls.rs`
 checks expected Unicode paths through the public converter, resolver and EDL importer.
 
 ## AAF and OMF
@@ -89,7 +89,7 @@ OMF carries no video at all.
 
 ## Tests
 
-- `tests/aaf_omf.rs`: AAF round trips at 25, 29.97 DF, 23.976 and 59.94 DF (clips, gaps,
+- `tests/it/aaf_omf.rs`: AAF round trips at 25, 29.97 DF, 23.976 and 59.94 DF (clips, gaps,
   two-sided and one-sided transitions, links, markers, start timecodes, constant and keyframed
   gain, media markers and timecode); 512-byte sectors; breakout to mono; embedded trimmed audio
   (sample data and source offsets); separate consolidated files with a video mixdown; OMF round
@@ -97,7 +97,7 @@ OMF carries no video at all.
   random corruption never panic. Nested sequences: AAF round trips as compositions (nests in
   nests, a nest used twice, another frame and sample rate, breakout to mono), OMF with the
   rendered sound, the audio needs of nests, a sequence inside itself.
-- `tests/uncarried_clips.rs`: every format's export report names each graphic clip and adjustment
+- `tests/it/uncarried_clips.rs`: every format's export report names each graphic clip and adjustment
   layer once, as a warning; a sequence without them reports nothing; what a re-import gives back
   matches the report; the FCP7 XML import names a clip item whose file is not defined.
 - `src/aaf/tests.rs`: written files checked against the required properties of every class
