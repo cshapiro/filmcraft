@@ -7,9 +7,9 @@ adapters, not supported formats in this PR. No new EffectCraft dependency is lin
 ## Try it
 
 1. Install EffectCraft with `effectcraft-cli` (tested against 0.16.0).
-2. Choose **File > Import From > Linked Projects**. Enter the absolute path to the installed CLI
+2. Choose **File > Dynamic Link > Import EffectCraft Composition**. Enter the absolute path to the installed CLI
    executable and enable it. This is session-only: a project file cannot select an executable.
-3. Enter an `.ecproj` path, list its compositions, choose one and import it. Drag the new item onto
+3. Browse folders in the centered Import modal, select an `.ecproj`, choose a composition and click Import. A project path can also be entered directly. Drag the new item onto
    the timeline like ordinary media. The initial placeholder is transparent; the dialog reports
    render activity and errors. No manual export/import is needed.
 4. Change the composition in EffectCraft and save. FilmCraft checks about every three seconds,
@@ -117,9 +117,20 @@ See #388 for design discussion and #1024 for the broader interop tracking scope.
 
 ### Local validation record (2026-10-24)
 
-Windows / EffectCraft CLI 0.16.0: formatting and workspace Clippy pass; the final engine suite has
-682 passes (4 ignored), format has 22 unit and 16 integration passes, and the opt-in real renderer
-integration passes. The Linked Projects UI test and both isolated reruns of the broad run's UI timing
-failures pass. The desktop build, layers, all 69 asset attributions and wasm (49 crates) pass. The screenshot was inspected.
-The unfiltered workspace run is not green: its NVENC SDR sample-entry assertion also reproduces in
-an earlier pre-feature binary and is tracked by the existing #2386 fix. No encoder changes are included.
+Windows / EffectCraft CLI 0.16.0 built from main `eb510878`: formatting, workspace Clippy,
+engine tests, the opt-in real renderer integration, layers, asset attribution and wasm (49 crates)
+pass. All 198 UI unit tests pass, including stable watch text/layout regressions; the styled picker
+and linked-project automation integration tests pass. The UI integration suite has 480 passes and
+one timing-sensitive proxy-attachment failure that passes alone. The contributor also confirmed
+that the Dev dialog no longer flickers.
+The unfiltered workspace run is not green: its NVENC SDR sample-entry assertion previously
+reproduced in a pre-feature binary and is tracked by #2386. No encoder changes are included.
+
+## Linked-item appearance
+
+Active EffectCraft links use EffectCraft's icon pink (`#E0368F`): the Project item's label swatch
+and the timeline clip's base color. Project cards retain their normal selection outline. Linked compositions use the same composition glyph as EffectCraft in list view and on thumbnail cards. Selection and disabled-clip shading
+still apply. Ordinary media, other providers and baked fallbacks keep normal label colors.
+The Import picker uses FilmCraft's shared centered modal styling. Renderer configuration and
+existing-link/cache actions remain available in expandable sections; Replace and Create New
+Composition workflows are not part of this step.

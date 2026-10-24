@@ -1363,7 +1363,7 @@ fn build() -> Vec<CommandSpec> {
                 if std::path::Path::new(&path).extension().is_some_and(|e| e.eq_ignore_ascii_case("ecproj")) {
                     match crate::project_links::import(s, &json!({"path":path,"bin":bin.map(|b| b.0)})) {
                         Ok(v) => ids.extend(v["items"].as_array().into_iter().flatten().filter_map(Value::as_u64)),
-                        Err(e) => errors.push(format!("{path}: {e}; use File > Import From > Linked Projects")),
+                        Err(e) => errors.push(format!("{path}: {e}; use File > Dynamic Link > Import EffectCraft Composition")),
                     }
                     continue;
                 }

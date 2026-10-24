@@ -489,7 +489,7 @@ pub fn poll(s: &mut Session) {
             tasks
                 .into_iter()
                 .map(|(id, link, adapter)| {
-                    *prog.status.lock().unwrap_or_else(PoisonError::into_inner) = format!("Checking / rendering {}", link.object_name);
+                    prog.status.lock().unwrap_or_else(PoisonError::into_inner).clear();
                     let result = render_cached(&*adapter, &*services, &link, &prog);
                     (id, link, result)
                 })
@@ -525,6 +525,7 @@ fn render_cached(
     static NEXT_RENDER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let serial = NEXT_RENDER.fetch_add(1, Ordering::Relaxed);
     let part = dir.join(format!("{revision}-{}-{serial}.part.{}", std::process::id(), adapter.extension()));
+    *progress.status.lock().unwrap_or_else(PoisonError::into_inner) = format!("Rendering {}", link.object_name);
     let rendered = adapter.render(link, &part, progress).and_then(|()| {
         if adapter.revision(services, link)? != revision {
             return Err("source changed during render; retrying on the next scan".into());
@@ -563,7 +564,7 @@ macro_rules! query {
 
 pub fn commands() -> Vec<CommandSpec> {
     vec![
-        cmd!("linkedProject.manage", "Linked Projects…", ["File", "Import From"], None, "{}", always, |_, _| Ok(Value::Null)),
+        cmd!("linkedProject.manage", "Import EffectCraft Composition…", ["File", "Dynamic Link"], None, "{}", always, |_, _| Ok(Value::Null)),
         query!("linkedProject.configure", "Enable Linked Renderer", r#"{"executable":str}"#, configure),
         query!("linkedProject.inspect", "Inspect Linked Project", r#"{"path":str,"provider":str=effectcraft}"#, inspect),
         cmd!("linkedProject.import", "Import Linked Project", [], None, r#"{"path":str,"provider":str=effectcraft,"object":str?,"bin":id?}"#, always, import),
@@ -670,6 +671,22 @@ mod tests {
     fn item(s: &mut Session, path: &str) -> ItemId {
         let r = s.execute("linkedProject.import", json!({"provider":"synthetic","path":path})).unwrap();
         ItemId(r["items"][0].as_u64().unwrap())
+    }
+
+    #[test]
+    fn cached_checks_are_quiet_but_new_renders_report_progress() {
+        let (mut s, mock, path) = setup();
+        let id = item(&mut s, &path);
+        finish(&mut s);
+        let link = s.project.project_links.get(&id).unwrap().clone();
+        let progress = Progress::default();
+        render_cached(&*mock, &*s.services, &link, &progress).unwrap();
+        assert!(progress.status.lock().unwrap().is_empty());
+        assert_eq!(mock.renders.load(Ordering::Relaxed), 1);
+        mock.revision.fetch_add(1, Ordering::Relaxed);
+        render_cached(&*mock, &*s.services, &link, &progress).unwrap();
+        assert_eq!(*progress.status.lock().unwrap(), "Rendering Synthetic artboard");
+        assert_eq!(mock.renders.load(Ordering::Relaxed), 2);
     }
 
     #[test]
