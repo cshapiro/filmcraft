@@ -1324,7 +1324,7 @@ fn preset_manager(app: &mut FilmcraftApp, ctx: &egui::Context) {
                     m.selected = m.save_name.trim().to_string();
                 }
             });
-            crate::dialog_style::actions(ui, |ui| {
+            ui.horizontal(|ui| {
                 let r = ui.button(tl!("Import…"));
                 reg.add("presetManager.import", r.rect, "Import…");
                 if r.clicked() {
@@ -1341,14 +1341,14 @@ fn preset_manager(app: &mut FilmcraftApp, ctx: &egui::Context) {
                     cmd = Some(("export.presets.delete", json!({"name": m.selected})));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let r = ui.add(crate::dialog_style::secondary(&app.tokens, tl!("Cancel")));
+                    reg.add("presetManager.cancel", r.rect, "Cancel");
+                    close |= r.clicked();
                     let r = ui.add_enabled(sel.is_some(), crate::dialog_style::primary(&app.tokens, tl!("OK")));
                     reg.add("presetManager.ok", r.rect, "OK");
                     if r.clicked() {
                         apply = Some(m.selected.clone());
                     }
-                    let r = ui.add(crate::dialog_style::secondary(&app.tokens, tl!("Cancel")));
-                    reg.add("presetManager.cancel", r.rect, "Cancel");
-                    close |= r.clicked();
                 });
             });
         });

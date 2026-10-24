@@ -683,10 +683,10 @@ fn export_dialog(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 ui.colored_label(Color32::from_rgb(0xff, 0x80, 0x80), &d.error);
             }
             crate::dialog_style::actions(ui, |ui| {
-                let ok = ui.add(crate::dialog_style::primary(&app.tokens, tl!("Export")));
-                elems.push(("exportTemplate.ok".into(), ok.rect, "Export".into()));
                 let cancel = ui.add(crate::dialog_style::secondary(&app.tokens, tl!("Cancel")));
                 elems.push(("exportTemplate.cancel".into(), cancel.rect, "Cancel".into()));
+                let ok = ui.add(crate::dialog_style::primary(&app.tokens, tl!("Export")));
+                elems.push(("exportTemplate.ok".into(), ok.rect, "Export".into()));
                 if ok.clicked() {
                     action = Some(true);
                 }
@@ -768,10 +768,10 @@ fn replace_dialog(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 ui.colored_label(Color32::from_rgb(0xff, 0x80, 0x80), &d.error);
             }
             crate::dialog_style::actions(ui, |ui| {
-                let ok = ui.add(crate::dialog_style::primary(&app.tokens, tl!("OK")));
-                elems.push(("replaceFonts.ok".into(), ok.rect, "OK".into()));
                 let cancel = ui.add(crate::dialog_style::secondary(&app.tokens, tl!("Cancel")));
                 elems.push(("replaceFonts.cancel".into(), cancel.rect, "Cancel".into()));
+                let ok = ui.add(crate::dialog_style::primary(&app.tokens, tl!("OK")));
+                elems.push(("replaceFonts.ok".into(), ok.rect, "OK".into()));
                 if ok.clicked() {
                     action = Some(true);
                 }
