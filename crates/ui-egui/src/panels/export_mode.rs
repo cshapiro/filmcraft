@@ -1724,7 +1724,8 @@ mod preview_tests {
         assert_eq!(app.session.playhead(), app.session.sequence_rate().snap(Tick::from_seconds_f64(2.0)));
         app.playback.preroll = None;
         app.playback.anchor_time = 1.0;
-        let _ = ctx.run_ui(egui::RawInput { time: Some(4.0), ..Default::default() }, |ui| app.advance_playback(ui.ctx()));
+        let mut out = ctx.run_ui(egui::RawInput { time: Some(4.0), ..Default::default() }, |ui| app.advance_playback(ui.ctx()));
+        out.textures_delta.clear();
         assert!(!app.playback.playing);
         assert!(app.playback.looping, "the Program loop preference is preserved");
         let (_, last) = preview_bounds(&app).unwrap();
