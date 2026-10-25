@@ -1202,7 +1202,7 @@ fn preview_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq_id:
         }
         let (texture, shown) = crate::panels::monitor::cpu_texture(app, ui.ctx(), name, key, &asked, crate::state::DisplayMode::Composite);
         if shown != Some(key) {
-            ui.ctx().request_repaint();
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
         }
         if let Some(tex) = texture {
             let inner = match app.ui.export.settings.scaling {
@@ -1733,6 +1733,29 @@ mod preview_tests {
         assert_eq!(app.session.revision, revision);
         assert_eq!(app.session.is_dirty(), dirty);
         assert_eq!(app.session.undo_mark(), undo);
+    }
+
+    #[test]
+    fn export_transport_treats_null_monitor_as_omitted() {
+        let mut app = app();
+        app.ui.focused = PanelKind::Source;
+        let ctx = egui::Context::default();
+        let (first, last) = preview_bounds(&app).unwrap();
+        for params in [json!({}), json!({"monitor": null})] {
+            for (command, expected) in [("markers.goToIn", first), ("playhead.stepBack", first), ("markers.goToOut", last), ("playhead.stepForward", last)] {
+                crate::menus::invoke(&mut app, &ctx, command, params.clone()).unwrap();
+                assert_eq!(app.session.sequence_rate().frame_at(app.session.playhead()), expected);
+            }
+            crate::menus::invoke(&mut app, &ctx, "playback.toggle", params.clone()).unwrap();
+            assert!(app.playback.playing);
+            assert!(!app.source_playback.clock.playing);
+            assert_eq!(app.session.sequence_rate().frame_at(app.session.playhead()), first);
+            crate::menus::invoke(&mut app, &ctx, "playback.toggle", params).unwrap();
+            assert!(!app.playback.playing);
+        }
+        // An explicit Program target retains the unrestricted transport behavior.
+        crate::menus::invoke(&mut app, &ctx, "playhead.stepBack", json!({"monitor": "program"})).unwrap();
+        assert_eq!(app.session.sequence_rate().frame_at(app.session.playhead()), first - 1);
     }
 
     #[test]

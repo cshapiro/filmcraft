@@ -191,7 +191,7 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
         return crate::panels::export_mode::preview_command(app, id, &params);
     }
     // Export owns the transport even if Source had focus before changing workspaces.
-    if app.ui.mode == Mode::Export && params.get("monitor").is_none() {
+    if app.ui.mode == Mode::Export && params.get("monitor").is_none_or(Value::is_null) {
         let preview = match id {
             "playback.toggle" => Some("export.preview.toggle"),
             "playhead.stepBack" => Some("export.preview.stepBack"),
