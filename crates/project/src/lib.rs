@@ -1398,7 +1398,7 @@ impl Project {
         }
         self.search_bins.iter().for_each(|b| see(b.id.0));
         // deleting an item leaves these entries behind: a new item taking that id would inherit them
-        self.transcripts.keys().chain(self.source_graphics.keys()).chain(self.narrations.keys()).for_each(|i| see(i.0));
+        self.transcripts.keys().chain(self.source_graphics.keys()).chain(self.narrations.keys()).chain(self.project_links.keys()).for_each(|i| see(i.0));
         // `lut.import` names LUTs `lut<id>`
         self.luts.iter().filter_map(|l| l.id.strip_prefix("lut")?.parse().ok()).for_each(&mut see);
         fn mixer(m: &MixerStrip) -> impl Iterator<Item = u64> + '_ {
@@ -1888,6 +1888,25 @@ fn has_auto_point(e: &EffectInstance) -> bool {
 mod tests {
     use super::*;
     use filmcraft_media::{DemoScene, MediaSource};
+
+    #[test]
+    fn max_id_reserves_orphaned_project_link_keys() {
+        let mut p = Project::new("Orphaned link");
+        p.project_links.insert(
+            ItemId(9000),
+            project_link::ProjectLink {
+                version: 1,
+                provider: "effectcraft".into(),
+                project_path: "missing.ecproj".into(),
+                object: "comp".into(),
+                object_name: "Old composition".into(),
+                revision: String::new(),
+                cache_generation: 0,
+                baked: false,
+            },
+        );
+        assert_eq!(p.max_id(), 9000);
+    }
 
     fn demo_project() -> (Project, ItemId, ItemId) {
         let mut p = Project::new("Test");

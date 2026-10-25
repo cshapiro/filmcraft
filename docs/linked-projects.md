@@ -12,7 +12,7 @@ adapters, not supported formats in this PR. No new EffectCraft dependency is lin
 3. Browse folders in the centered Import modal, select an `.ecproj`, choose a composition and click Import. A project path can also be entered directly. Drag the new item onto
    the timeline like ordinary media. The initial placeholder is transparent; the dialog reports
    render activity and errors. No manual export/import is needed.
-4. Change the composition in EffectCraft and save. FilmCraft checks about every three seconds,
+4. Change the composition in EffectCraft and save. FilmCraft checks about every five seconds,
    renders in the background and replaces the item's full-resolution source. Timeline instances,
    source trims, transforms and effects keep their identity and values.
 5. Bake to a **new** `.mov` path to freeze an ordinary media file. Restore link resumes automatic
@@ -134,3 +134,12 @@ still apply. Ordinary media, other providers and baked fallbacks keep normal lab
 The Import picker uses FilmCraft's shared centered modal styling. Renderer configuration and
 existing-link/cache actions remain available in expandable sections; Replace and Create New
 Composition workflows are not part of this step.
+
+## Export preflight
+
+Only links reachable from the exported sequence (including nested sequences and subclip parents)
+are checked. Unused, disabled or stale links elsewhere in the project do not block an export.
+The export worker computes fresh content hashes and reopens each used render cache, requiring
+video media before encoding or writing caption sidecars. Background content scans remain automatic
+at a five-second cadence; metadata-only revision caching is not used. Failed asynchronous preflight
+is reported through the normal export job status. Explicit wait mode performs the same checks inline.

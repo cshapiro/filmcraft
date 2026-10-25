@@ -244,22 +244,46 @@ impl Drop for Runtime {
 /// A final export must never silently use the last-good picture of a failed or changed link.
 /// Preflight hashes on the caller before handing an immutable full-resolution cache to export.
 /// Background previews remain available while that link is stale or offline.
-pub fn validate_export(s: &Session, project: &filmcraft_project::Project) -> Result<()> {
-    for (id, link) in &project.project_links {
+/// Capture session-owned adapter authorization; perform fresh content checks on the export worker.
+pub fn export_preflight(s: &Session) -> impl FnOnce(&filmcraft_project::Project, ItemId) -> Result<()> + Send + 'static {
+    let adapters = s.project_links.adapters.clone();
+    let services = s.services.clone();
+    move |project, seq| validate_export_inner(&adapters, &*services, &crate::media_pool::MediaPool::default(), project, seq)
+}
+
+#[cfg(test)]
+fn validate_export(s: &Session, project: &filmcraft_project::Project, seq: ItemId) -> Result<()> {
+    validate_export_inner(&s.project_links.adapters, &*s.services, &s.media, project, seq)
+}
+
+fn validate_export_inner(
+    adapters: &BTreeMap<String, Arc<dyn ProjectAdapter>>,
+    services: &dyn Services,
+    media: &crate::media_pool::MediaPool,
+    project: &filmcraft_project::Project,
+    seq: ItemId,
+) -> Result<()> {
+    let used = crate::project_tools::closure(project, &[seq]);
+    for (id, link) in project.project_links.iter().filter(|(id, _)| used.contains(id)) {
         if link.baked || project.item(*id).is_none() {
             continue;
         }
-        let adapter = s
-            .project_links
-            .adapters
+        let adapter = adapters
             .get(&link.provider)
             .ok_or_else(|| EngineError::Other(format!("Linked object {}: enable its renderer or bake it before exporting", link.object_name)))?;
-        let revision = adapter.revision(&*s.services, link).map_err(|e| EngineError::Other(format!("Linked object {}: {e}", link.object_name)))?;
+        let revision = adapter.revision(services, link).map_err(|e| EngineError::Other(format!("Linked object {}: {e}", link.object_name)))?;
         if revision != link.revision {
             return Err(EngineError::Other(format!("Linked object {} has changed: wait for background refresh before exporting", link.object_name)));
         }
-        if !project.item(*id).and_then(|i| i.as_media()).is_some_and(|m| matches!(&m.media,MediaRef::File{path} if Path::new(path).is_file())) {
+        let Some(MediaRef::File { path }) = project.item(*id).and_then(|i| i.as_media()).map(|m| &m.media) else {
             return Err(EngineError::Other(format!("Linked object {} has no render cache; refresh before exporting", link.object_name)));
+        };
+        // Reopen the published file rather than trusting an already-cached decoder or its existence.
+        let source = media
+            .open_file(path, services)
+            .map_err(|e| EngineError::Other(format!("Linked object {} has an invalid render cache: {e}; refresh before exporting", link.object_name)))?;
+        if source.info().video.is_none() {
+            return Err(EngineError::Other(format!("Linked object {} render cache has no video; refresh before exporting", link.object_name)));
         }
     }
     Ok(())
@@ -457,7 +481,7 @@ pub fn poll(s: &mut Session) {
     if s.project_links.worker.is_some()
         || s.project_links.paused
         || cfg!(target_arch = "wasm32")
-        || s.project_links.last_scan.is_some_and(|t| t.elapsed() < Duration::from_secs(3))
+        || s.project_links.last_scan.is_some_and(|t| t.elapsed() < Duration::from_secs(5))
     {
         return;
     }
@@ -564,7 +588,6 @@ macro_rules! query {
 
 pub fn commands() -> Vec<CommandSpec> {
     vec![
-        cmd!("linkedProject.manage", "Import EffectCraft Composition…", ["File", "Dynamic Link"], None, "{}", always, |_, _| Ok(Value::Null)),
         query!("linkedProject.configure", "Enable Linked Renderer", r#"{"executable":str}"#, configure),
         query!("linkedProject.inspect", "Inspect Linked Project", r#"{"path":str,"provider":str=effectcraft}"#, inspect),
         cmd!("linkedProject.import", "Import Linked Project", [], None, r#"{"path":str,"provider":str=effectcraft,"object":str?,"bin":id?}"#, always, import),
@@ -607,6 +630,7 @@ mod tests {
         revision: AtomicU64,
         fail: AtomicBool,
         renders: AtomicU64,
+        revision_threads: Mutex<Vec<std::thread::ThreadId>>,
     }
     impl ProjectAdapter for Mock {
         fn id(&self) -> &'static str {
@@ -626,6 +650,7 @@ mod tests {
             }])
         }
         fn revision(&self, _: &dyn Services, l: &ProjectLink) -> std::result::Result<String, String> {
+            self.revision_threads.lock().unwrap().push(std::thread::current().id());
             if self.fail.load(Ordering::Relaxed) {
                 return Err("synthetic dependency missing".into());
             }
@@ -647,7 +672,8 @@ mod tests {
 
     fn setup() -> (Session, Arc<Mock>, String) {
         let mut s = Session::default();
-        let mock = Arc::new(Mock { revision: AtomicU64::new(10), fail: AtomicBool::new(false), renders: AtomicU64::new(0) });
+        let mock =
+            Arc::new(Mock { revision: AtomicU64::new(10), fail: AtomicBool::new(false), renders: AtomicU64::new(0), revision_threads: Mutex::default() });
         s.project_links.adapters.insert("synthetic".into(), mock.clone());
         let source = crate::media_test_util::tmp_dir("project-links")
             .join(format!("{}.synthetic", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()))
@@ -673,6 +699,81 @@ mod tests {
         ItemId(r["items"][0].as_u64().unwrap())
     }
 
+    fn sequence_using(s: &mut Session, id: ItemId) -> ItemId {
+        use filmcraft_project::{SequenceSettings, TrackKind};
+        let p = Arc::make_mut(&mut s.project);
+        let rate = filmcraft_time::FrameRate { num: 24, den: 1 };
+        let seq = p.new_sequence("Linked export", SequenceSettings::default(), 1, 0, None);
+        let clip = p
+            .make_track_item(
+                id,
+                TrackKind::Video,
+                filmcraft_time::Tick::ZERO,
+                filmcraft_time::TimeRange::new(filmcraft_time::Tick::ZERO, rate.tick_of(12)),
+                rate,
+            )
+            .unwrap();
+        p.sequence_mut(seq).unwrap().video_tracks[0].items.push(clip);
+        seq
+    }
+
+    #[test]
+    fn export_preflight_runs_on_the_export_worker_and_fails_before_writing() {
+        let (mut s, mock, path) = setup();
+        let id = item(&mut s, &path);
+        finish(&mut s);
+        let seq = sequence_using(&mut s, id);
+        mock.revision_threads.lock().unwrap().clear();
+        mock.fail.store(true, Ordering::Relaxed);
+        let output = Path::new(&path).with_extension("export.mov");
+        let settings =
+            filmcraft_export::ExportSettings { path: output.to_string_lossy().into_owned(), format: filmcraft_export::Format::ProRes, ..Default::default() };
+        let project = s.project.clone();
+        let caller = std::thread::current().id();
+        let job = crate::export_tools::spawn_export(&mut s, project, seq, settings, "Preflight regression".into(), false).unwrap();
+        let start = web_time::Instant::now();
+        loop {
+            let result = s.jobs.iter().find(|j| j.id == job).unwrap().result.lock().unwrap().clone();
+            if let Some(result) = result {
+                assert!(result.unwrap_err().contains("synthetic dependency missing"));
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(10));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let threads = mock.revision_threads.lock().unwrap();
+        assert!(!threads.is_empty());
+        assert!(threads.iter().all(|thread| *thread != caller), "hashing must not run on the command/UI caller");
+        assert!(!output.exists(), "failed preflight must not create an export");
+    }
+
+    #[test]
+    fn export_preflight_checks_only_reachable_links_and_reopens_the_cache() {
+        let (mut s, mock, path) = setup();
+        let id = item(&mut s, &path);
+        finish(&mut s);
+        let seq = sequence_using(&mut s, id);
+        let unrelated = Arc::make_mut(&mut s.project).new_sequence("Unrelated", Default::default(), 1, 0, None);
+        mock.fail.store(true, Ordering::Relaxed);
+        validate_export(&s, &s.project, unrelated).unwrap();
+        assert!(validate_export(&s, &s.project, seq).is_err());
+        s.project_links.adapters.clear();
+        validate_export(&s, &s.project, unrelated).unwrap();
+        s.project_links.adapters.insert("synthetic".into(), mock.clone());
+        mock.fail.store(false, Ordering::Relaxed);
+        // A nested sequence must still include the linked source in its closure.
+        let nested = sequence_using(&mut s, seq);
+        validate_export(&s, &s.project, nested).unwrap();
+        let cache = match &s.project.item(id).unwrap().as_media().unwrap().media {
+            MediaRef::File { path } => path.clone(),
+            _ => panic!("rendered file"),
+        };
+        std::fs::write(&cache, b"truncated cache").unwrap();
+        let error = validate_export(&s, &s.project, nested).unwrap_err().to_string();
+        assert!(error.contains("invalid render cache"), "{error}");
+        validate_export(&s, &s.project, unrelated).unwrap();
+    }
+
     #[test]
     fn cached_checks_are_quiet_but_new_renders_report_progress() {
         let (mut s, mock, path) = setup();
@@ -694,6 +795,7 @@ mod tests {
         let (mut s, mock, path) = setup();
         let id = item(&mut s, &path);
         finish(&mut s);
+        let seq = sequence_using(&mut s, id);
         let before = s.project.item(id).unwrap().as_media().unwrap().clone();
         assert!(matches!(before.media, MediaRef::File { .. }));
         let undo = s.history.undo.len();
@@ -711,7 +813,7 @@ mod tests {
         s.project_links.last_scan = None;
         finish(&mut s);
         assert_eq!(mock.renders.load(Ordering::Relaxed), 2, "unchanged inputs reuse cache");
-        validate_export(&s, &s.project).unwrap();
+        validate_export(&s, &s.project, seq).unwrap();
     }
 
     #[test]
@@ -719,19 +821,20 @@ mod tests {
         let (mut s, mock, path) = setup();
         let id = item(&mut s, &path);
         finish(&mut s);
+        let seq = sequence_using(&mut s, id);
         let media = s.project.item(id).unwrap().as_media().unwrap().media.clone();
         mock.fail.store(true, Ordering::Relaxed);
         s.project_links.last_scan = None;
         finish(&mut s);
         assert_eq!(s.project.item(id).unwrap().as_media().unwrap().media, media);
         assert_eq!(s.project_links.status[&id].state, "error");
-        assert!(validate_export(&s, &s.project).is_err());
+        assert!(validate_export(&s, &s.project, seq).is_err());
         mock.fail.store(false, Ordering::Relaxed);
         mock.revision.store(99, Ordering::Relaxed);
-        assert!(validate_export(&s, &s.project).is_err(), "changed saved project cannot export the old picture");
+        assert!(validate_export(&s, &s.project, seq).is_err(), "changed saved project cannot export the old picture");
         s.project_links.last_scan = None;
         finish(&mut s);
-        validate_export(&s, &s.project).unwrap();
+        validate_export(&s, &s.project, seq).unwrap();
     }
 
     #[test]
@@ -855,7 +958,7 @@ mod tests {
         let solid = items.values_mut().find(|v| v["kind"]["type"] == "Solid").unwrap();
         solid["kind"]["color"] = json!([0, 0, 1]);
         std::fs::write(&project, serde_json::to_vec(&doc).unwrap()).unwrap();
-        assert!(validate_export(&s, &s.project).is_err());
+        assert!(validate_export(&s, &s.project, seq).is_err());
         s.project_links.last_scan = None;
         finish(&mut s);
         assert_eq!(s.project.sequence(seq).unwrap().video_tracks[0].items[0], clip, "placement, trim and effects must survive refresh");

@@ -972,6 +972,7 @@ fn dynamic_link_import_uses_a_styled_modal_and_cancels_without_importing() {
     }
     let mut session = Session::new(Arc::new(Files));
     session.project_links.adapters.insert("effectcraft".into(), Arc::new(Comps));
+    assert!(session.execute("linkedProject.manage", json!({})).is_err(), "frontend-only actions must not report success through engine execution");
     let mut d = Driver::with(session);
     let menu = d.ok("ui.menu.list", json!({}));
     let entry = menu.as_array().unwrap().iter().find(|e| e["id"] == "linkedProject.manage").unwrap();
