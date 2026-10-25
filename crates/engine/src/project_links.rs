@@ -248,7 +248,8 @@ impl Drop for Runtime {
 pub fn export_preflight(s: &Session) -> impl FnOnce(&filmcraft_project::Project, ItemId) -> Result<()> + Send + 'static {
     let adapters = s.project_links.adapters.clone();
     let services = s.services.clone();
-    move |project, seq| validate_export_inner(&adapters, &*services, &crate::media_pool::MediaPool::default(), project, seq)
+    let media = s.media.clone();
+    move |project, seq| validate_export_inner(&adapters, &*services, &media, project, seq)
 }
 
 #[cfg(test)]
@@ -264,6 +265,7 @@ fn validate_export_inner(
     seq: ItemId,
 ) -> Result<()> {
     let used = crate::project_tools::closure(project, &[seq]);
+    let fresh = crate::media_pool::MediaPool::default();
     for (id, link) in project.project_links.iter().filter(|(id, _)| used.contains(id)) {
         if link.baked || project.item(*id).is_none() {
             continue;
@@ -278,9 +280,10 @@ fn validate_export_inner(
         let Some(MediaRef::File { path }) = project.item(*id).and_then(|i| i.as_media()).map(|m| &m.media) else {
             return Err(EngineError::Other(format!("Linked object {} has no render cache; refresh before exporting", link.object_name)));
         };
+        let path = media.follow(path).map_err(|e| EngineError::Other(format!("Linked object {} cache path is not followed: {e}", link.object_name)))?;
         // Reopen the published file rather than trusting an already-cached decoder or its existence.
-        let source = media
-            .open_file(path, services)
+        let source = fresh
+            .open_file(&path, services)
             .map_err(|e| EngineError::Other(format!("Linked object {} has an invalid render cache: {e}; refresh before exporting", link.object_name)))?;
         if source.info().video.is_none() {
             return Err(EngineError::Other(format!("Linked object {} render cache has no video; refresh before exporting", link.object_name)));
@@ -715,6 +718,37 @@ mod tests {
             .unwrap();
         p.sequence_mut(seq).unwrap().video_tracks[0].items.push(clip);
         seq
+    }
+
+    #[test]
+    fn export_preflight_follows_the_same_document_relative_cache_as_export() {
+        let (mut s, _, path) = setup();
+        let id = item(&mut s, &path);
+        finish(&mut s);
+        let seq = sequence_using(&mut s, id);
+        let original = match &s.project.item(id).unwrap().as_media().unwrap().media {
+            MediaRef::File { path } => path.clone(),
+            _ => panic!("rendered cache"),
+        };
+        let valid = std::fs::read(original).unwrap();
+        // No TMPDIR or working-directory mutation: the two locations are unique to this test.
+        let relative = format!("target/linked-relative-{}.png", Path::new(&path).file_stem().unwrap().to_string_lossy());
+        let document = Path::new(&path).with_extension("fcproj");
+        let resolved = document.parent().unwrap().join(&relative);
+        std::fs::create_dir_all(Path::new(&relative).parent().unwrap()).unwrap();
+        std::fs::create_dir_all(resolved.parent().unwrap()).unwrap();
+        std::fs::write(&relative, &valid).unwrap();
+        std::fs::write(&resolved, b"damaged document-relative cache").unwrap();
+        Arc::make_mut(&mut s.project).item_mut(id).unwrap().as_media_mut().unwrap().media = MediaRef::File { path: relative.clone() };
+        s.media.add_stored_paths([relative.clone()], Some(&document.to_string_lossy()));
+        assert_eq!(Path::new(&s.media.follow(&relative).unwrap()), resolved);
+        let error = export_preflight(&s)(&s.project, seq).unwrap_err().to_string();
+        assert!(error.contains("invalid render cache"), "must reject the export's damaged file despite the valid cwd decoy: {error}");
+        std::fs::write(&relative, b"damaged cwd decoy").unwrap();
+        std::fs::write(&resolved, valid).unwrap();
+        export_preflight(&s)(&s.project, seq).unwrap();
+        std::fs::remove_file(&relative).unwrap();
+        std::fs::remove_file(resolved).unwrap();
     }
 
     #[test]
