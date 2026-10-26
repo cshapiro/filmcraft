@@ -321,7 +321,7 @@ struct Plan {
 }
 
 /// Apply planned relinks as one undo step.
-fn apply(s: &mut Session, plans: Vec<Plan>, align_timecode: bool, label: &str) -> Result<Vec<Value>> {
+fn apply(s: &mut Session, plans: Vec<Plan>, align_timecode: bool, label: &str, replace: bool) -> Result<Vec<Value>> {
     let rows: Vec<Value> = plans.iter().map(|p| json!({"item": p.item.0, "path": p.cand.path})).collect();
     let sources: Vec<(ItemId, String, filmcraft_media::SharedSource)> =
         plans.iter().filter_map(|p| p.cand.source.clone().map(|src| (p.item, p.cand.path.clone(), src))).collect();
@@ -332,6 +332,10 @@ fn apply(s: &mut Session, plans: Vec<Plan>, align_timecode: bool, label: &str) -
             let rate = m.info.frame_rate();
             m.media = MediaRef::File { path: p.cand.path.clone() };
             m.offline = false;
+            if replace {
+                // A proxy belongs to the old footage, not to its replacement.
+                m.proxy = None;
+            }
             if p.cand.identity.is_some() {
                 m.identity = p.cand.identity;
             }
@@ -404,6 +408,10 @@ fn others(s: &Session, skip: ItemId, old: &str, new: &str, o: &MatchOptions) -> 
 
 /// `media.relink`: link `item` to `path` (checked unless `force`), then the others.
 pub fn relink(s: &mut Session, p: &Value) -> Result<Value> {
+    relink_inner(s, p, false)
+}
+
+fn relink_inner(s: &mut Session, p: &Value, replace: bool) -> Result<Value> {
     let item = u64_p(p, "item").map(ItemId).ok_or_else(|| bad("media.relink", "need `item`"))?;
     let path = str_p(p, "path").ok_or_else(|| bad("media.relink", "need `path`"))?.to_string();
     let force = bool_p(p, "force").unwrap_or(false);
@@ -429,7 +437,7 @@ pub fn relink(s: &mut Session, p: &Value) -> Result<Value> {
     if o.relink_others {
         plans.extend(others(s, item, &old, &path, &o));
     }
-    let rows = apply(s, plans, o.align_timecode, "Link Media")?;
+    let rows = apply(s, plans, o.align_timecode, if replace { "Replace Footage" } else { "Link Media" }, replace)?;
     Ok(json!({"relinked": rows, "remaining": s.offline.missing.iter().map(|i| i.0).collect::<Vec<_>>()}))
 }
 
@@ -469,7 +477,7 @@ pub fn auto_relink(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         return Err(bad("media.autoRelink", "need `from` and `to`, or `folder`"));
     }
-    let rows = if plans.is_empty() { Vec::new() } else { apply(s, plans, o.align_timecode, "Link Media")? };
+    let rows = if plans.is_empty() { Vec::new() } else { apply(s, plans, o.align_timecode, "Link Media", false)? };
     refresh(s);
     Ok(json!({"relinked": rows, "failed": failed, "remaining": s.offline.missing.iter().map(|i| i.0).collect::<Vec<_>>()}))
 }
@@ -612,6 +620,22 @@ fn status_json(s: &Session, id: ItemId) -> Option<Value> {
     }))
 }
 
+fn can_replace_footage(s: &Session) -> std::result::Result<(), String> {
+    let [item] = s.state.project_selection.as_slice() else { return Err("select one file in the Project panel".into()) };
+    match s.project.item(*item).and_then(|i| i.as_media()).map(|m| &m.media) {
+        Some(MediaRef::File { .. }) => Ok(()),
+        _ => Err("select one file in the Project panel".into()),
+    }
+}
+
+fn replace_footage(s: &mut Session, p: &Value) -> Result<Value> {
+    let item = u64_p(p, "item").ok_or_else(|| bad("media.replaceFootage", "need `item`"))?;
+    let path = str_p(p, "path").ok_or_else(|| bad("media.replaceFootage", "need `path`"))?;
+    // Build our own parameters: callers cannot accidentally relink neighbouring missing media
+    // or shift source times when deliberately replacing a single Project item.
+    relink_inner(s, &json!({"item": item, "path": path, "force": true, "relinkOthers": false}), true)
+}
+
 pub fn commands() -> Vec<CommandSpec> {
     vec![
         CommandSpec {
@@ -680,16 +704,11 @@ pub fn commands() -> Vec<CommandSpec> {
         CommandSpec {
             id: "media.replaceFootage",
             label: "Replace Footage…",
-            menu: &[],
+            menu: &["Clip"],
             shortcut: None,
             params: r#"{"item":id,"path":str}"#,
-            enabled: always,
-            run: |s, p| {
-                let mut q = p.clone();
-                q["force"] = json!(true);
-                q["relinkOthers"] = json!(false);
-                relink(s, &q)
-            },
+            enabled: can_replace_footage,
+            run: replace_footage,
             journal: true,
         },
         CommandSpec {
