@@ -295,7 +295,10 @@ have no identity, so relinking them skips the fingerprint check.
 Replace Footage deliberately accepts a different file name, duration, dimensions or frame rate.
 It preserves the Project item's ID and its uses in every sequence; `MediaClip::identity` is updated
 to the replacement file's fingerprint. Clip placements, source trims,
-effects and durations are not changed, even when the new source is shorter. Source timecode is
+effects and durations are retained, even when the new source is shorter. A static Motion anchor
+still at the old source's centre moves to the replacement's centre when dimensions change,
+including uses through subclips and in other sequences. Position, Scale and Rotation remain
+unchanged; custom or animated anchors retain their source-pixel values. Source timecode is
 not realigned and other bin items are not relinked. Attached proxies are detached because they
 belong to the old source. Replacement and proxy detachment are one undoable edit; undo/redo and
 save/reopen retain the association. Missing or unreadable replacement files leave the project intact.

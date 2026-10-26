@@ -330,6 +330,7 @@ fn apply(s: &mut Session, plans: Vec<Plan>, align_timecode: bool, label: &str, r
             let Some(m) = proj.item_mut(p.item).and_then(|i| i.as_media_mut()) else { continue };
             let old_tc = m.info.start_timecode;
             let rate = m.info.frame_rate();
+            let old_size = m.info.video.as_ref().map(|v| (v.width, v.height));
             m.media = MediaRef::File { path: p.cand.path.clone() };
             m.offline = false;
             if replace {
@@ -349,10 +350,14 @@ fn apply(s: &mut Session, plans: Vec<Plan>, align_timecode: bool, label: &str, r
                 m.info = info.clone();
             }
             proj.shift_media_time(p.item, shift);
+            if replace {
+                recenter_default_anchors(proj, p.item, old_size);
+            }
             if p.cand.info.is_some() {
                 // The item's size is now the file's own. Clips that came from an interchange import
                 // while the file was missing still have an "auto" (NaN) anchor waiting for it:
-                // centre it in the real picture. Points that are numbers are not touched.
+                // centre it in the real picture. Other numeric points stay intentional;
+                // replacement's default Motion anchor was already adjusted above.
                 proj.resolve_placed_auto_points(|_| true, |source| source.id == p.item);
             }
         }
@@ -377,6 +382,36 @@ fn apply(s: &mut Session, plans: Vec<Plan>, align_timecode: bool, label: &str, r
         s.offline.prompt = false;
     }
     Ok(rows)
+}
+
+/// Keep an unanimated, source-centred Motion pivot centred when replacement changes its size.
+/// Numeric custom pivots and all keyframed pivots remain intentional source-pixel coordinates.
+fn recenter_default_anchors(project: &mut Project, item: ItemId, old_size: Option<(u32, u32)>) {
+    let (Some(old), Some(new)) = (old_size, project.source_size(item)) else { return };
+    if old == new || old.0 == 0 || old.1 == 0 || new.0 == 0 || new.1 == 0 {
+        return;
+    }
+    // Include every sequence and subclip chain, using the same bounded lookup as the renderer.
+    let users: std::collections::BTreeSet<ItemId> =
+        project.items.values().filter(|i| project.resolve_media(i.id).is_some_and(|(source, _, _)| source == item)).map(|i| i.id).collect();
+    let old_center = filmcraft_geom::Vec2::new(f64::from(old.0) / 2.0, f64::from(old.1) / 2.0);
+    let new_center = filmcraft_geom::Vec2::new(f64::from(new.0) / 2.0, f64::from(new.1) / 2.0);
+    for entry in project.items.values_mut() {
+        let ItemKind::Sequence(sequence) = &mut entry.kind else { continue };
+        if !sequence.all_tracks().flat_map(|t| t.items.iter()).any(|clip| users.contains(&clip.item)) {
+            continue;
+        }
+        let sequence = std::sync::Arc::make_mut(sequence);
+        for clip in sequence.all_tracks_mut().flat_map(|t| t.items.iter_mut()) {
+            if !users.contains(&clip.item) {
+                continue;
+            }
+            let Some(anchor) = clip.effect_mut("motion").and_then(|e| e.params.get_mut("anchor")) else { continue };
+            if anchor.keyframes.is_empty() && anchor.value == filmcraft_project::ParamValue::Vec2(old_center) {
+                anchor.value = filmcraft_project::ParamValue::Vec2(new_center);
+            }
+        }
+    }
 }
 
 /// Other missing items that the remap (or the new file's folder) finds, checked.

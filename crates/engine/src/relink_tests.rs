@@ -14,6 +14,109 @@ use crate::relink::{apply_remap, derive_remap};
 const W: u32 = 160;
 const H: u32 = 90;
 
+/// A differently sized replacement keeps its visible centre in sequence coordinates.
+#[test]
+fn replace_footage_keeps_smaller_and_larger_sources_centered() {
+    let root = tmp_dir("replace-centre-pixels");
+    let original = root.join("original.mov");
+    make_movie(&original, DemoScene::Aurora, W, H, 12);
+    let (mut s, items, _) = session_with(&[&original]);
+    for (width, height) in [(80, 40), (240, 120), (80, 40)] {
+        let replacement = root.join(format!("{width}-{height}.png"));
+        // A small opaque marker at the source centre makes both up- and down-sizing visible.
+        image::RgbaImage::from_fn(width, height, |x, y| {
+            if (width / 2 - 10..width / 2 + 10).contains(&x) && (height / 2 - 5..height / 2 + 5).contains(&y) {
+                image::Rgba([255, 255, 255, 255])
+            } else {
+                image::Rgba([0, 0, 0, 0])
+            }
+        })
+        .save(&replacement)
+        .unwrap();
+        let before = s.project.clone();
+        s.execute("media.replaceFootage", json!({"item":items[0].0,"path":replacement.to_string_lossy()})).unwrap();
+        let after = s.project.clone();
+        let (w, h, pixels) = frame_rgba(&mut s, 2, 1.0);
+        assert_eq!((w, h), (W as usize, H as usize));
+        let lit: Vec<(usize, usize)> =
+            pixels.as_chunks::<4>().0.iter().enumerate().filter(|(_, p)| p[0] > 100 || p[1] > 100 || p[2] > 100).map(|(i, _)| (i % w, i / w)).collect();
+        assert!(lit.len() > 10);
+        assert_eq!(
+            lit.iter().map(|p| p.0).min().unwrap() + lit.iter().map(|p| p.0).max().unwrap(),
+            w - 1,
+            "horizontal centre after {width}x{height} replacement"
+        );
+        assert_eq!(
+            lit.iter().map(|p| p.1).min().unwrap() + lit.iter().map(|p| p.1).max().unwrap(),
+            h - 1,
+            "vertical centre after {width}x{height} replacement"
+        );
+        s.execute("edit.undo", json!({})).unwrap();
+        assert_eq!(s.project, before);
+        s.execute("edit.redo", json!({})).unwrap();
+        assert_eq!(s.project, after);
+    }
+    let path = root.join("centred.fcproj");
+    s.execute("file.save", json!({"path":path.to_string_lossy()})).unwrap();
+    assert_eq!(open(path.to_str().unwrap()).project, s.project);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Default pivots follow the source through subclips; custom and animated pivots stay intact.
+#[test]
+fn replace_footage_preserves_custom_motion_and_centers_subclips_in_every_sequence() {
+    use filmcraft_geom::Vec2;
+    use filmcraft_project::{ItemKind, Keyframe, Label, ParamValue, TrackKind};
+    use filmcraft_time::{Tick, TimeRange};
+    let root = tmp_dir("replace-centre-motion");
+    let original = root.join("original.mov");
+    let replacement = root.join("replacement.mov");
+    make_movie(&original, DemoScene::Aurora, W, H, 12);
+    make_movie(&replacement, DemoScene::Dunes, W * 2, H * 2, 12);
+    let (mut s, items, first) = session_with(&[&original, &original]);
+    let rate = s.sequence_rate();
+    let p = std::sync::Arc::make_mut(&mut s.project);
+    let range = TimeRange::new(Tick::ZERO, rate.tick_of(12));
+    let sub = p.add_item("sub", Label::Iris, ItemKind::Subclip { parent: items[0], range, restrict_trims: false }, None);
+    let nested = p.add_item("nested sub", Label::Iris, ItemKind::Subclip { parent: sub, range, restrict_trims: false }, None);
+    let settings = p.sequence(first).unwrap().settings.clone();
+    let second = p.new_sequence("Other sequence", settings, 1, 0, None);
+    let mut clips = Vec::new();
+    for (source, kind) in [(nested, 0), (items[0], 1), (items[0], 2)] {
+        let mut clip = p.make_track_item(source, TrackKind::Video, Tick::ZERO, range, rate).unwrap();
+        for e in &mut clip.effects {
+            filmcraft_project::resolve_auto_points(e, (W, H), (W, H));
+        }
+        let motion = clip.effect_mut("motion").unwrap();
+        motion.params.get_mut("position").unwrap().value = ParamValue::Vec2(Vec2::new(31.0, 42.0));
+        motion.params.get_mut("scale").unwrap().value = ParamValue::Float(75.0);
+        motion.params.get_mut("rotation").unwrap().value = ParamValue::Float(12.0);
+        let anchor = motion.params.get_mut("anchor").unwrap();
+        if kind == 1 {
+            anchor.value = ParamValue::Vec2(Vec2::new(12.0, 17.0));
+        }
+        if kind == 2 {
+            anchor.keyframes = vec![Keyframe::new(Tick::ZERO, anchor.value.clone()), Keyframe::new(rate.tick_of(5), ParamValue::Vec2(Vec2::new(20.0, 30.0)))];
+        }
+        clips.push(clip);
+    }
+    p.sequence_mut(second).unwrap().video_tracks[0].items = clips;
+    let mut expected = p.sequence(second).unwrap().clone();
+    expected.video_tracks[0].items[0].effect_mut("motion").unwrap().params.get_mut("anchor").unwrap().value =
+        ParamValue::Vec2(Vec2::new(f64::from(W), f64::from(H)));
+    let other = p.item(items[1]).unwrap().clone();
+    let before = s.project.clone();
+    s.execute("media.replaceFootage", json!({"item":items[0].0,"path":replacement.to_string_lossy()})).unwrap();
+    assert_eq!(s.project.sequence(second), Some(&expected));
+    assert_eq!(s.project.item(items[1]), Some(&other));
+    let first_seq = s.project.sequence(first).unwrap();
+    assert_eq!(first_seq.video_tracks[0].items[0].effect("motion").unwrap().vec2_at("anchor", Tick::ZERO), Vec2::new(f64::from(W), f64::from(H)));
+    assert_eq!(first_seq.video_tracks[0].items[1], before.sequence(first).unwrap().video_tracks[0].items[1]);
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.project, before);
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 /// Replacement preserves edits, refreshes source pixels, and survives undo/redo and reopen.
 fn replace_footage_preserves_edits_updates_pixels_and_round_trips() {
@@ -37,7 +140,13 @@ fn replace_footage_preserves_edits_updates_pixels_and_round_trips() {
     s.state.project_selection.clear();
     s.execute("media.replaceFootage", json!({"item":item.0,"path":replacement.to_string_lossy(),"relinkOthers":true,"alignTimecode":true})).unwrap();
     let after = s.project.clone();
-    assert_eq!(after.sequence(seq), before.sequence(seq), "all placements, trims, effects and clip identities survive");
+    let mut expected = before.sequence(seq).unwrap().clone();
+    for clip in expected.all_tracks_mut().flat_map(|t| t.items.iter_mut()).filter(|c| c.item == item) {
+        if let Some(motion) = clip.effect_mut("motion") {
+            motion.params.get_mut("anchor").unwrap().value = filmcraft_project::ParamValue::Vec2(filmcraft_geom::Vec2::new(f64::from(W), f64::from(H)));
+        }
+    }
+    assert_eq!(after.sequence(seq), Some(&expected), "only the default source anchor changes; all edits survive");
     assert_eq!(after.items.len(), before.items.len());
     let media = after.item(item).unwrap().as_media().unwrap();
     assert_eq!(media.info.video.as_ref().unwrap().width, W * 2);
@@ -314,7 +423,7 @@ fn fingerprint_mismatch_is_refused_unless_forced() {
     let root = tmp_dir("relink-mismatch");
     let (path, items) = saved_project(&root);
     std::fs::remove_dir_all(root.join("Media")).unwrap();
-    // same name, duration, size and rate — different pictures
+    // same name, duration, size and rate â€” different pictures
     let other = root.join("Other");
     std::fs::create_dir_all(&other).unwrap();
     make_movie(&other.join("a.mov"), DemoScene::Dunes, W, H, 12);
@@ -399,7 +508,7 @@ fn reimport_clears_offline_list_after_path_resolves() {
     let a = root.join("Media/a.mov");
 
     // Delete a.mov so the saved project now points at a missing file, then reopen:
-    // `on_open` → `refresh` → `scan` registers items[0] as missing.
+    // `on_open` â†’ `refresh` â†’ `scan` registers items[0] as missing.
     let online = frame_rgba(&mut open(&path), 3, 1.0);
     std::fs::remove_file(&a).unwrap();
     let mut s = open(&path);
@@ -411,7 +520,7 @@ fn reimport_clears_offline_list_after_path_resolves() {
     // and the user has to reopen or `media.relink` each item.
     make_movie(&a, DemoScene::Aurora, W, H, 12);
     s.execute("file.import", json!({"paths": [a.to_string_lossy()]})).unwrap();
-    assert!(!s.offline.missing.contains(&items[0]), "issue #110 — file.import did not refresh s.offline.missing (still contains {:?})", s.offline.missing);
+    assert!(!s.offline.missing.contains(&items[0]), "issue #110 â€” file.import did not refresh s.offline.missing (still contains {:?})", s.offline.missing);
     assert_eq!(s.execute("media.findMissing", json!({})).unwrap()["missing"].as_array().unwrap().len(), 0);
     // and the monitors show the file again, not the cached slate
     assert_eq!(frame_rgba(&mut s, 3, 1.0), online);

@@ -12,6 +12,10 @@ original item, so a later selection change cannot redirect the replacement. The 
 `media.replaceFootage {item, path}` remains available to CLI/MCP clients. Cancellation is a no-op.
 See [project files](../../docs/project-files.md#link-media) for preservation and proxy semantics.
 
+Replacing with another frame size keeps a default, static Motion anchor centred in the new
+source. Position, Scale, Rotation, custom anchors and anchor keyframes are preserved. This
+applies in every sequence, including clips that reference the source through subclips.
+
 ## Control input limits
 
 The control channel bounds `ui.click` to 10 clicks and `ui.drag` to 1024 movement steps (#2784).
