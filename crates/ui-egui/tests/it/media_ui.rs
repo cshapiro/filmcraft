@@ -518,6 +518,7 @@ fn locate_relinks_instead_of_importing() {
 }
 
 #[test]
+/// The actual menu preserves its target across async selection changes and supports cancellation.
 fn replace_footage_picker_cancels_and_replaces_the_original_selection() {
     let root = tmp_dir("replace-footage");
     let original = root.join("original.mov");

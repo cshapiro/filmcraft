@@ -358,6 +358,13 @@ fn apply(s: &mut Session, plans: Vec<Plan>, align_timecode: bool, label: &str, r
         }
         Ok(())
     })?;
+    if replace {
+        // Replacement is a new user decision, even if the path and fingerprint are unchanged.
+        // Do this only after the edit succeeds, and leave other items in each batch valid.
+        for job in &mut s.media_jobs {
+            job.sources.retain(|(item, _, _)| !plans.iter().any(|p| p.item == *item));
+        }
+    }
     for p in &plans {
         s.media.allow(&p.cand.path);
     }
@@ -411,6 +418,7 @@ pub fn relink(s: &mut Session, p: &Value) -> Result<Value> {
     relink_inner(s, p, false)
 }
 
+/// Plan and apply a checked relink or an intentional single-item replacement.
 fn relink_inner(s: &mut Session, p: &Value, replace: bool) -> Result<Value> {
     let item = u64_p(p, "item").map(ItemId).ok_or_else(|| bad("media.relink", "need `item`"))?;
     let path = str_p(p, "path").ok_or_else(|| bad("media.relink", "need `path`"))?.to_string();
@@ -620,6 +628,7 @@ fn status_json(s: &Session, id: ItemId) -> Option<Value> {
     }))
 }
 
+/// Enable replacement only for one selected file-backed Project item.
 fn can_replace_footage(s: &Session) -> std::result::Result<(), String> {
     let [item] = s.state.project_selection.as_slice() else { return Err("select one file in the Project panel".into()) };
     match s.project.item(*item).and_then(|i| i.as_media()).map(|m| &m.media) {
@@ -628,6 +637,7 @@ fn can_replace_footage(s: &Session) -> std::result::Result<(), String> {
     }
 }
 
+/// Replace the explicitly named item without remapping neighbours or shifting source times.
 fn replace_footage(s: &mut Session, p: &Value) -> Result<Value> {
     let item = u64_p(p, "item").ok_or_else(|| bad("media.replaceFootage", "need `item`"))?;
     let path = str_p(p, "path").ok_or_else(|| bad("media.replaceFootage", "need `path`"))?;

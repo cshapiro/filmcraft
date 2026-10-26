@@ -15,6 +15,7 @@ const W: u32 = 160;
 const H: u32 = 90;
 
 #[test]
+/// Replacement preserves edits, refreshes source pixels, and survives undo/redo and reopen.
 fn replace_footage_preserves_edits_updates_pixels_and_round_trips() {
     let root = tmp_dir("replace-footage");
     let original = root.join("original.mov");
@@ -57,6 +58,7 @@ fn replace_footage_preserves_edits_updates_pixels_and_round_trips() {
 }
 
 #[test]
+/// Invalid targets and files must leave the project and its undo history unchanged.
 fn replace_footage_rejects_bad_targets_and_files_without_mutation() {
     let root = tmp_dir("replace-invalid");
     let original = root.join("original.mov");
@@ -91,6 +93,7 @@ fn replace_footage_rejects_bad_targets_and_files_without_mutation() {
 }
 
 #[test]
+/// A completed job for another source cannot overwrite replacement footage.
 fn replace_footage_ignores_old_background_proxy_and_ingest_outputs() {
     use crate::proxies::{OnDone, PendingJob};
     let root = tmp_dir("replace-pending");
@@ -122,6 +125,92 @@ fn replace_footage_ignores_old_background_proxy_and_ingest_outputs() {
             assert!(s.project.item(items[1]).unwrap().as_media().unwrap().proxy.is_some(), "valid outputs in the same batch still attach");
         }
         assert!(s.media_jobs.is_empty());
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Replacing with the same file invalidates older jobs, without discarding other batch items.
+#[test]
+fn replace_footage_invalidates_pending_jobs_for_the_same_source() {
+    use crate::proxies::{OnDone, PendingJob};
+    let root = tmp_dir("replace-same-source");
+    let original = root.join("original.mov");
+    make_movie(&original, DemoScene::Aurora, W, H, 12);
+    for on_done in [OnDone::AttachProxies, OnDone::ReplaceMedia] {
+        let (mut s, items, _) = session_with(&[&original, &original]);
+        let sources = items
+            .iter()
+            .map(|id| {
+                let media = s.project.item(*id).unwrap().as_media().unwrap();
+                (*id, media.media.clone(), media.identity)
+            })
+            .collect();
+        let outputs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        s.media_jobs.push(PendingJob { job: u64::MAX, on_done, sources, outputs: outputs.clone() });
+        // Rejected replacements must not invalidate work that still belongs to this source.
+        assert!(s.execute("media.replaceFootage", json!({"item":items[0].0,"path":root.join("missing.mov").to_string_lossy()})).is_err());
+        assert_eq!(s.media_jobs[0].sources.len(), 2);
+        s.execute("media.replaceFootage", json!({"item":items[0].0,"path":original.to_string_lossy()})).unwrap();
+        assert_eq!(s.media_jobs[0].sources.iter().map(|(id, _, _)| *id).collect::<Vec<_>>(), vec![items[1]]);
+        // Simulate the worker finishing only after replacement, with the unchanged source tuple.
+        outputs.lock().unwrap().extend(items.iter().map(|id| (*id, original.to_string_lossy().into_owned())));
+        crate::proxies::poll(&mut s);
+        assert!(s.project.item(items[0]).unwrap().as_media().unwrap().proxy.is_none());
+        if on_done == OnDone::AttachProxies {
+            assert!(s.project.item(items[1]).unwrap().as_media().unwrap().proxy.is_some());
+        }
+        assert!(s.media_jobs.is_empty());
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Rejected job files are cleaned up, but files adopted as current media remain available.
+#[test]
+fn replace_footage_cleans_up_unreferenced_job_outputs() {
+    use crate::proxies::{OnDone, PendingJob};
+    let root = tmp_dir("replace-cleanup");
+    let original = root.join("original.mov");
+    make_movie(&original, DemoScene::Aurora, W, H, 12);
+    for (on_done, adopt_output) in
+        [(OnDone::AttachProxies, 0), (OnDone::AttachProxies, 1), (OnDone::AttachProxies, 2), (OnDone::AttachProxies, 3), (OnDone::Nothing, 0)]
+    {
+        let stale = root.join("stale-proxy.mov");
+        let valid = root.join("valid-proxy.mov");
+        std::fs::copy(&original, &stale).unwrap();
+        std::fs::copy(&original, &valid).unwrap();
+        let (mut s, items, _) = session_with(&[&original, &original]);
+        let sources = items
+            .iter()
+            .map(|id| {
+                let m = s.project.item(*id).unwrap().as_media().unwrap();
+                (*id, m.media.clone(), m.identity)
+            })
+            .collect();
+        s.media_jobs.push(PendingJob {
+            job: u64::MAX,
+            on_done,
+            sources,
+            outputs: std::sync::Arc::new(std::sync::Mutex::new(vec![
+                (items[0], stale.to_string_lossy().into_owned()),
+                (items[1], valid.to_string_lossy().into_owned()),
+            ])),
+        });
+        let alias = root.join(".").join("stale-proxy.mov");
+        let replacement = match adopt_output {
+            1 | 3 => &stale,
+            2 => &alias,
+            _ => &original,
+        };
+        s.execute("media.replaceFootage", json!({"item":items[0].0,"path":replacement.to_string_lossy()})).unwrap();
+        if adopt_output == 3 {
+            // The output is no longer current, but undo must still be able to restore it.
+            s.execute("media.replaceFootage", json!({"item":items[0].0,"path":original.to_string_lossy()})).unwrap();
+        }
+        crate::proxies::poll(&mut s);
+        assert_eq!(stale.exists(), adopt_output != 0 || on_done == OnDone::Nothing, "only an unreferenced obsolete output is deleted");
+        assert!(valid.exists(), "accepted output is untouched");
+        assert!(original.exists(), "input source is untouched");
+        assert_eq!(s.project.item(items[1]).unwrap().as_media().unwrap().proxy.is_some(), on_done == OnDone::AttachProxies);
     }
     let _ = std::fs::remove_dir_all(root);
 }
