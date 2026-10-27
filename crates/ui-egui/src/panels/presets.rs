@@ -104,7 +104,7 @@ pub fn save_dialog(app: &mut FilmcraftApp, ctx: &egui::Context) {
     let mut close = false;
     let mut apply = false;
     crate::dialog_style::Window::new(&app.tokens, tl!("Save Preset"))
-        .id(egui::Id::new("Save Preset"))
+        .id(egui::Id::unique("Save Preset"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -112,7 +112,7 @@ pub fn save_dialog(app: &mut FilmcraftApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(tl!("Name:"));
-                let r = ui.text_edit_singleline(&mut d.name);
+                let r = crate::widgets::accessible_name(ui.text_edit_singleline(&mut d.name), tl!("Name"));
                 app.auto.add("savePreset.name", r.rect, "Name");
             });
             ui.add_space(4.0);
@@ -131,7 +131,7 @@ pub fn save_dialog(app: &mut FilmcraftApp, ctx: &egui::Context) {
             }
             ui.add_space(4.0);
             ui.label(tl!("Description:"));
-            let r = ui.text_edit_multiline(&mut d.description);
+            let r = crate::widgets::accessible_name(ui.text_edit_multiline(&mut d.description), tl!("Description"));
             app.auto.add("savePreset.description", r.rect, "Description");
             ui.add_space(6.0);
             crate::dialog_style::actions(ui, |ui| {

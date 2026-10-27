@@ -40,7 +40,7 @@ fn dialog_chrome_tracks_theme_and_custom_accent_without_global_style_changes() {
                 },
                 |root| {
                     let ctx = root.ctx();
-                    dialog_style::Window::new(&tokens, "Themed dialog").id(egui::Id::new("theme-dialog")).collapsible(false).show(ctx, |ui| {
+                    dialog_style::Window::new(&tokens, "Themed dialog").id(egui::Id::unique("theme-dialog")).collapsible(false).show(ctx, |ui| {
                         assert_eq!(ui.visuals().override_text_color, original.visuals.override_text_color);
                         dialog_style::header(ui, &tokens, "Custom header", 360.0);
                         dialog_style::actions(ui, |ui| {

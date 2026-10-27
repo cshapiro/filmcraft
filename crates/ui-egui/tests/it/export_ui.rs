@@ -284,7 +284,7 @@ fn preset_manager_search_favourite_save_apply() {
     for pair in ids.windows(2) {
         assert!(rect(pair[0]).right() <= rect(pair[1]).left(), "Preset Manager action order: {pair:?}");
     }
-    let window = d.harness.ctx.memory(|m| m.area_rect(egui::Id::new("preset-manager"))).unwrap();
+    let window = d.harness.ctx.memory(|m| m.area_rect(egui::Id::unique("preset-manager"))).unwrap();
     assert!((window.right() - rect("presetManager.cancel").right()).abs() < 20.0, "Cancel must stay at the right edge");
     // search
     d.ok("ui.set", json!({"export": {"manager": {"query": "prores"}}}));

@@ -487,7 +487,7 @@ fn save_project_actions_are_right_aligned_and_cancel_preserves_work() {
     };
     let (save, discard, cancel) = (rect("closeProject.save"), rect("closeProject.dontSave"), rect("closeProject.cancel"));
     assert!(save.right() <= discard.left() && discard.right() <= cancel.left());
-    let window = d.harness.ctx.memory(|m| m.area_rect(egui::Id::new(("clip-dialog", "closeProject")))).unwrap();
+    let window = d.harness.ctx.memory(|m| m.area_rect(egui::Id::unique(("clip-dialog", "closeProject")))).unwrap();
     assert!((window.right() - cancel.right()).abs() < 20.0, "action group stays at the right edge: {window:?} {cancel:?}");
     assert_eq!(d.harness.ctx.global_style().visuals.override_text_color, style.visuals.override_text_color);
     d.click("closeProject.cancel");

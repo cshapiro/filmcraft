@@ -9,12 +9,13 @@ use crate::FilmcraftApp;
 use crate::panels::project::ProjectDialog;
 
 fn push(app: &mut FilmcraftApp, id: &str, r: &egui::Response, label: &str) {
+    crate::widgets::accessible_name(r.clone(), label);
     app.auto.add(id, r.rect, label);
 }
 
 pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
     let Some(mut d) = app.ui.project_panel.dialog.clone() else { return };
-    crate::widgets::revert_drag_on_escape(ctx, egui::Id::new("project-dialog-before-drag"), &mut d);
+    crate::widgets::revert_drag_on_escape(ctx, egui::Id::unique("project-dialog-before-drag"), &mut d);
     let mut close = false;
     let mut run: Option<(String, Value)> = None;
     let title = match &d {
@@ -24,7 +25,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
         ProjectDialog::FreeformOptions { .. } => tl!("Freeform View Options"),
         ProjectDialog::SaveArrangement { .. } => tl!("Save Arrangement"),
     };
-    let mut win = crate::dialog_style::Window::new(&app.tokens, title).id(egui::Id::new("project-dialog")).collapsible(false).resizable(false).centered(ctx);
+    let mut win = crate::dialog_style::Window::new(&app.tokens, title).id(egui::Id::unique("project-dialog")).collapsible(false).resizable(false).centered(ctx);
     // a fixed size keeps the two-list dialog from shifting while its lists settle
     if matches!(d, ProjectDialog::MetadataDisplay { .. }) {
         win = win.fixed_size(egui::vec2(480.0, 470.0));
@@ -35,7 +36,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
             ProjectDialog::SavePresetAs { name } => {
                 ui.horizontal(|ui| {
                     ui.label(tl!("Name:"));
-                    let r = ui.add(egui::TextEdit::singleline(name).desired_width(240.0));
+                    let r = crate::widgets::accessible_name(ui.add(egui::TextEdit::singleline(name).desired_width(240.0)), "Name");
                     push(app, "projectDialog.name", &r, "Name");
                 });
                 if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -73,7 +74,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
             ProjectDialog::SaveArrangement { name, bin } => {
                 ui.horizontal(|ui| {
                     ui.label(tl!("Name:"));
-                    let r = ui.add(egui::TextEdit::singleline(name).desired_width(240.0));
+                    let r = crate::widgets::accessible_name(ui.add(egui::TextEdit::singleline(name).desired_width(240.0)), "Name");
                     push(app, "projectDialog.name", &r, "Name");
                 });
                 if ok_cancel(app, ui, &mut close) && !name.trim().is_empty() {
@@ -123,7 +124,8 @@ fn metadata_display(app: &mut FilmcraftApp, ui: &mut egui::Ui, columns: &mut Vec
     let all = filmcraft_engine::project_panel::all_columns(&app.session.project);
     ui.horizontal(|ui| {
         ui.label(tl!("Show:"));
-        let r = ui.add(egui::TextEdit::singleline(filter).hint_text(tl!("Search fields")).desired_width(220.0));
+        let r =
+            crate::widgets::accessible_name(ui.add(egui::TextEdit::singleline(filter).hint_text(tl!("Search fields")).desired_width(220.0)), "Search fields");
         push(app, "projectDialog.filter", &r, "Search fields");
     });
     ui.add_space(4.0);
@@ -216,7 +218,7 @@ fn manage_presets(app: &mut FilmcraftApp, ui: &mut egui::Ui, selected: &mut usiz
     let filled = presets.get(*selected).is_some_and(Option::is_some);
     ui.horizontal(|ui| {
         ui.label(tl!("Name:"));
-        let r = ui.add_enabled(filled, egui::TextEdit::singleline(name).desired_width(200.0));
+        let r = crate::widgets::accessible_name(ui.add_enabled(filled, egui::TextEdit::singleline(name).desired_width(200.0)), "Name");
         push(app, "projectDialog.name", &r, "Name");
         let b = ui.add_enabled(filled, egui::Button::new(tl!("Rename")));
         push(app, "projectDialog.rename", &b, "Rename");
