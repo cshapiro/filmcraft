@@ -43,6 +43,8 @@ Cancel pauses automatic retries until Refresh, a new import or renderer enableme
 increments the persistent cache generation, forcing a new render for environmental changes (fonts,
 external resources not enumerated as footage). Neither configure nor executable paths are journaled
 into a shareable project; renderer selection is a local explicit trust decision.
+Trusted CLI/MCP/control callers have the same explicit configuration authority as the UI.
+Loading a project cannot select or enable an executable.
 
 ## Contract and cache
 
@@ -74,9 +76,9 @@ survives app restarts until the OS clears it. Outputs must be readable visual me
 readers retain complete files. Successful cache replacement invalidates FilmCraft's source/view
 caches without adding undo steps. Last-good media stays visible after an update fails. Status reports
 the error; final export refuses missing/changed sources instead of silently exporting last-good media.
-Final export uses the same full-quality source, never a low-resolution preview. Export preflight
-currently hashes dependencies synchronously before starting the job; this needs asynchronous
-preflight for large projects before promotion from draft.
+Final export uses the same full-quality source, never a low-resolution preview. Its export worker
+hashes dependencies and validates the cache before writing output; the interactive caller captures
+the authorized adapters without hashing project files.
 
 ## Deliberate first-step limits / remaining review work
 

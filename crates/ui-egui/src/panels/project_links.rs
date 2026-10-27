@@ -21,7 +21,7 @@ struct Dialog {
 }
 
 fn id() -> Id {
-    Id::new("linkedProjects.dialog")
+    Id::unique("linkedProjects.dialog")
 }
 
 pub fn open(ctx: &Context) {
@@ -161,8 +161,17 @@ fn browser(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut Dialog, height
             egui::ScrollArea::vertical().id_salt("linkedProjects.files").auto_shrink([false, false]).max_height(height - 24.0).show(ui, |ui| {
                 for (index, entry) in state.entries.clone().into_iter().enumerate() {
                     let path = mb::join(&state.folder, &entry.name);
-                    let label = if entry.is_dir { format!("▸ {}", entry.name) } else { entry.name };
+                    // Reserve room for the original vector folder icon; glyph availability varies by host.
+                    let label = if entry.is_dir { format!("     {}", entry.name) } else { entry.name };
                     let r = ui.add(egui::Button::selectable(state.path == path, label).truncate());
+                    if entry.is_dir {
+                        crate::icons::paint(
+                            ui.painter(),
+                            egui::Rect::from_center_size(egui::pos2(r.rect.left() + 10.0, r.rect.center().y), egui::vec2(12.0, 12.0)),
+                            crate::icons::Icon::Folder,
+                            app.tokens.icon,
+                        );
+                    }
                     app.auto.add_response(&format!("linkedProjects.file.{index}"), &r, &path);
                     if r.clicked() {
                         if entry.is_dir {

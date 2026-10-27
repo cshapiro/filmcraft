@@ -242,7 +242,6 @@ impl Drop for Runtime {
 }
 
 /// A final export must never silently use the last-good picture of a failed or changed link.
-/// Preflight hashes on the caller before handing an immutable full-resolution cache to export.
 /// Background previews remain available while that link is stale or offline.
 /// Capture session-owned adapter authorization; perform fresh content checks on the export worker.
 pub fn export_preflight(s: &Session) -> impl FnOnce(&filmcraft_project::Project, ItemId) -> Result<()> + Send + 'static {
