@@ -465,7 +465,7 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
             return Ok(Value::Null);
         }
         "mode.export" => {
-            app.ui.mode = Mode::Export;
+            app.set_mode(Mode::Export);
             return Ok(Value::Null);
         }
         "app.checkForUpdates" => {
@@ -494,7 +494,7 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
         // File ▸ Export ▸ Media… opens the Export mode, like ⌘M (#382); with a path it exports directly.
         "file.exportMedia" if params.get("path").is_none() => {
             filmcraft_engine::find_command(id).map_or(Ok(()), |c| (c.enabled)(&app.session))?;
-            app.ui.mode = Mode::Export;
+            app.set_mode(Mode::Export);
             return Ok(json!({"mode": "export"}));
         }
         // Audio Gain from the menu or G opens the dialog; with params it applies directly.

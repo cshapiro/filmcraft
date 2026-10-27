@@ -132,6 +132,8 @@ Custom. Playback stops on the last selected frame; Play there restarts at the ra
 Export does not loop even if Program looping is enabled; the Program preference is preserved.
 Navigation changes the shared sequence playhead without altering clips, marks, export settings,
 dirty state or undo history. Audio-only formats keep audition and navigation controls.
+Entering Export finishes any active editing/recording transport. Preview playback never starts
+mixer automation, multicamera recording or voice-over capture, including with a mixer strip in Write mode.
 The details below the picture scroll on smaller windows, leaving the Export buttons accessible.
 
 The picture previews sequence composition at reduced resolution with output dimensions/aspect
