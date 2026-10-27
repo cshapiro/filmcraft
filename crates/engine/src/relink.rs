@@ -337,7 +337,8 @@ fn apply(s: &mut Session, plans: Vec<Plan>, align_timecode: bool, label: &str, r
                 // A proxy belongs to the old footage, not to its replacement.
                 m.proxy = None;
             }
-            if p.cand.identity.is_some() {
+            // An unreadable replacement identity is unknown, never the old footage's identity.
+            if replace || p.cand.identity.is_some() {
                 m.identity = p.cand.identity;
             }
             let mut shift = Tick::ZERO;

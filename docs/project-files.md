@@ -294,7 +294,8 @@ have no identity, so relinking them skips the fingerprint check.
 
 Replace Footage deliberately accepts a different file name, duration, dimensions or frame rate.
 It preserves the Project item's ID and its uses in every sequence; `MediaClip::identity` is updated
-to the replacement file's fingerprint. Clip placements, source trims,
+to the replacement file's fingerprint, or cleared if the host can decode the file but cannot
+read its fingerprint metadata. It never retains the old file's identity after replacement. Clip placements, source trims,
 effects and durations are retained, even when the new source is shorter. A static Motion anchor
 still at the old source's centre moves to the replacement's centre when dimensions change,
 including uses through subclips and in other sequences. Position, Scale and Rotation remain

@@ -14,6 +14,46 @@ use crate::relink::{apply_remap, derive_remap};
 const W: u32 = 160;
 const H: u32 = 90;
 
+/// A replacement whose bytes can be decoded but not fingerprinted must not inherit the old identity.
+#[test]
+fn replace_footage_clears_unreadable_identity_and_undo_restores_it() {
+    struct NoFingerprint;
+    impl crate::Services for NoFingerprint {
+        fn read_file(&self, path: &str) -> std::io::Result<Vec<u8>> {
+            std::fs::read(path)
+        }
+        fn write_file(&self, path: &str, data: &[u8]) -> std::io::Result<()> {
+            crate::Services::write_file(&crate::FsServices, path, data)
+        }
+        fn file_size(&self, _path: &str) -> std::io::Result<u64> {
+            Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "fingerprint metadata unavailable"))
+        }
+    }
+    let root = tmp_dir("replace-no-fingerprint");
+    let original = root.join("original.mov");
+    let replacement = root.join("replacement.mov");
+    make_movie(&original, DemoScene::Aurora, W, H, 12);
+    make_movie(&replacement, DemoScene::Dunes, W, H, 12);
+    let (mut s, items, _) = session_with(&[&original]);
+    let item = items[0];
+    let before = s.project.clone();
+    assert!(before.item(item).unwrap().as_media().unwrap().identity.is_some());
+    s.services = std::sync::Arc::new(NoFingerprint);
+    s.execute("media.replaceFootage", json!({"item":item.0,"path":replacement.to_string_lossy()})).unwrap();
+    let media = s.project.item(item).unwrap().as_media().unwrap();
+    assert_eq!(media.media, filmcraft_project::MediaRef::File { path: replacement.to_string_lossy().into_owned() });
+    assert!(media.identity.is_none(), "the old footage's fingerprint cannot describe the replacement");
+    let after = s.project.clone();
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.project, before);
+    s.execute("edit.redo", json!({})).unwrap();
+    assert_eq!(s.project, after);
+    let path = root.join("replaced.fcproj");
+    s.execute("file.save", json!({"path":path.to_string_lossy()})).unwrap();
+    assert_eq!(open(path.to_str().unwrap()).project.item(item), after.item(item));
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// A differently sized replacement keeps its visible centre in sequence coordinates.
 #[test]
 fn replace_footage_keeps_smaller_and_larger_sources_centered() {
@@ -423,7 +463,7 @@ fn fingerprint_mismatch_is_refused_unless_forced() {
     let root = tmp_dir("relink-mismatch");
     let (path, items) = saved_project(&root);
     std::fs::remove_dir_all(root.join("Media")).unwrap();
-    // same name, duration, size and rate â€” different pictures
+    // same name, duration, size and rate -- different pictures
     let other = root.join("Other");
     std::fs::create_dir_all(&other).unwrap();
     make_movie(&other.join("a.mov"), DemoScene::Dunes, W, H, 12);
@@ -508,7 +548,7 @@ fn reimport_clears_offline_list_after_path_resolves() {
     let a = root.join("Media/a.mov");
 
     // Delete a.mov so the saved project now points at a missing file, then reopen:
-    // `on_open` â†’ `refresh` â†’ `scan` registers items[0] as missing.
+    // `on_open` -> `refresh` -> `scan` registers items[0] as missing.
     let online = frame_rgba(&mut open(&path), 3, 1.0);
     std::fs::remove_file(&a).unwrap();
     let mut s = open(&path);
@@ -520,7 +560,7 @@ fn reimport_clears_offline_list_after_path_resolves() {
     // and the user has to reopen or `media.relink` each item.
     make_movie(&a, DemoScene::Aurora, W, H, 12);
     s.execute("file.import", json!({"paths": [a.to_string_lossy()]})).unwrap();
-    assert!(!s.offline.missing.contains(&items[0]), "issue #110 â€” file.import did not refresh s.offline.missing (still contains {:?})", s.offline.missing);
+    assert!(!s.offline.missing.contains(&items[0]), "issue #110 -- file.import did not refresh s.offline.missing (still contains {:?})", s.offline.missing);
     assert_eq!(s.execute("media.findMissing", json!({})).unwrap()["missing"].as_array().unwrap().len(), 0);
     // and the monitors show the file again, not the cached slate
     assert_eq!(frame_rgba(&mut s, 3, 1.0), online);
