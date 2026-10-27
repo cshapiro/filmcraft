@@ -444,7 +444,8 @@ pub fn poll(s: &mut Session) {
                 match result {
                     Ok((revision, path)) => {
                         let same_file = s.project.item(id).and_then(|i| i.as_media()).is_some_and(|m| matches!(&m.media,MediaRef::File{path:p} if p==&path));
-                        if revision == before.revision && same_file {
+                        let stale_offline = s.media.offline_status(id).is_some() || s.offline.missing.contains(&id);
+                        if revision == before.revision && same_file && !stale_offline {
                             s.project_links.status.insert(id, Status { state: "ready".into(), message: "Up to date".into() });
                             continue;
                         }
@@ -461,6 +462,7 @@ pub fn poll(s: &mut Session) {
                                     link.revision = revision;
                                 }
                                 s.media.insert_file(id, &path, src);
+                                s.offline.missing.retain(|item| item != &id);
                                 s.bump_view();
                                 s.project_links.status.insert(id, Status { state: "ready".into(), message: "Updated from saved project".into() });
                             }
@@ -805,6 +807,30 @@ mod tests {
         let error = validate_export(&s, &s.project, nested).unwrap_err().to_string();
         assert!(error.contains("invalid render cache"), "{error}");
         validate_export(&s, &s.project, unrelated).unwrap();
+    }
+
+    #[test]
+    fn unchanged_link_recovers_a_cached_offline_slate_when_its_file_returns() {
+        let (mut s, mock, path) = setup();
+        let id = item(&mut s, &path);
+        finish(&mut s);
+        let MediaRef::File { path } = &s.project.item(id).unwrap().as_media().unwrap().media else { panic!("expected a cache file") };
+        let path = path.clone();
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        s.media.remove(id);
+        let slate = s.media.source_for(&s.project, id, &*s.services).unwrap();
+        assert!(s.media.offline_status(id).is_some());
+        s.offline.missing.push(id);
+        std::fs::write(&path, bytes).unwrap();
+        s.project_links.last_scan = None;
+        finish(&mut s);
+        assert_eq!(mock.renders.load(Ordering::Relaxed), 1, "the returned cache does not need another render");
+        assert!(s.media.offline_status(id).is_none(), "an unchanged cache must replace the stale offline source");
+        assert!(!s.offline.missing.contains(&id));
+        let recovered = s.media.source_for(&s.project, id, &*s.services).unwrap();
+        assert!(!Arc::ptr_eq(&slate, &recovered));
+        assert_eq!(s.project_links.status.get(&id).unwrap().state, "ready");
     }
 
     #[test]

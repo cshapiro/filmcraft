@@ -20,6 +20,11 @@ adapters, not supported formats in this PR. No new EffectCraft dependency is lin
 6. Reopen the FilmCraft project: enable the installed renderer again. The source path and selected
    object ID survive. Use the path/composition fields and Relink for a moved project or deleted comp.
 
+Export mode shows a persistent warning when the selected sequence uses a linked composition whose
+renderer is disabled for this session. **Configure linked projects…** opens the renderer controls;
+enable your installed renderer and wait for the link to refresh before exporting. Baking the link
+is an alternative when live updates are no longer needed. Unused and baked links do not block export.
+
 File > Import also accepts `.ecproj` once its renderer is enabled. A multi-composition project needs
 the explicit selection in Linked Projects (or the `object` command parameter).
 
@@ -63,6 +68,11 @@ One worker per session checks/renders links serially. Work is panic-guarded. The
 window, stdin or shell; arguments are passed separately. Cancel kills and reaps the active child;
 there is a ten-minute subprocess timeout. Status exposes the current object/phase, not a fabricated
 frame percentage. Results from a removed/undone/relinked descriptor are discarded.
+
+Cache retention remains a prototype limitation: distinct revisions and interrupted-render files
+can accumulate in the host's temporary directory. Cross-platform private cache placement and a
+quota/cleanup policy still need design. Age alone is not a safe eviction rule because saved projects
+and undo history can reference older revisions; this prototype does not automatically delete them.
 
 The SHA-256 revision includes project bytes, object ID, directly listed footage contents and
 resolved paths, renderer path/size/mtime, render contract and explicit refresh generation. This

@@ -1,8 +1,8 @@
 # Roadmap detail
 
-Experimental contribution (2026-10-24, #388): saved-project links with an EffectCraft CLI adapter are implemented on this branch. Full-composition background cache refresh, errors, relink and bake/restore are in scope; frame serving, used ranges, web/Flatpak packaging and other app adapters remain. This is a draft prototype, not a readiness or parity-score increase. See [linked-projects](linked-projects.md).
+Experimental contribution (2026-10-24, #388): saved-project links with an EffectCraft CLI adapter are implemented on this branch. Full-composition background cache refresh, error handling, relinking, and baking/restoring are in scope; frame serving, used ranges, web/Flatpak packaging and other app adapters remain. This is a draft prototype, not a readiness or parity-score increase. See [linked-projects](linked-projects.md).
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (M8: Fujifilm F-Log / F-Log2 / F-Log2 C colour spaces) · **Target:** Adobe Premiere Pro 2026 (26.5.2)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-27 · **Change:** minor (linked-project contribution and export renderer setup guidance) · **Target:** Adobe Premiere Pro 2026 (26.5.2)
 
 Forward-looking plan: milestones with status, the current focus and what's next, with estimates in
 Opus 5.5 agent-hours (calibration in [target-app-parity.md](target-app-parity.md#calibration)).
@@ -89,5 +89,6 @@ the web app shell ([G20](gaps.md#g20-the-web-app-shell)).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | Linked-project prototype scope documented; Export now explains session renderer setup without changing readiness or parity scores |
 | 2026-10-10 | minor | Alpha gate table added (craftrules core-workflow gate): six core workflows, all pass on macOS; stage stays alpha |
 | 2026-10-10 | major | Created: milestone table moved from ROADMAP.md (M5 and M9 remaining work updated), HW and L10N rows, beta milestones B1–B7, Current focus from the re-measure |

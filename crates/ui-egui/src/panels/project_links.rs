@@ -30,6 +30,35 @@ pub fn open(ctx: &Context) {
     });
 }
 
+/// Explain session-only renderer authorization before the user attempts a final export.
+/// This is a cheap readiness hint; the worker still checks revisions and cache validity.
+pub(super) fn export_notice(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
+    if app.session.project.project_links.is_empty() {
+        return;
+    }
+    let Some(seq) = app.session.state.active_sequence else { return };
+    let used = filmcraft_engine::project_tools::closure(&app.session.project, &[seq]);
+    let missing = app.session.project.project_links.iter().find(|(id, link)| {
+        used.contains(id) && !link.baked && app.session.project.item(**id).is_some() && !app.session.project_links.adapters.contains_key(&link.provider)
+    });
+    let Some((_, link)) = missing else { return };
+    let message =
+        tlf!("Export blocked: enable the renderer for linked composition {name} in this session, or bake it to ordinary media.", name = link.object_name);
+    egui::Frame::new().fill(app.tokens.field_bg).inner_margin(8).show(ui, |ui| {
+        ui.set_width((ui.available_width() - 16.0).max(0.0));
+        let response = ui.add(egui::Label::new(egui::RichText::new(&message).color(app.tokens.danger)).wrap());
+        app.auto.add_response("export.linkedProject.warning", &response, &message);
+        let response = ui.button(tl!("Configure linked projects…"));
+        app.auto.add_response("export.linkedProject.configure", &response, "Configure linked projects…");
+        if response.clicked()
+            && let Err(error) = crate::menus::invoke(app, ui.ctx(), "linkedProject.manage", json!({}))
+        {
+            app.ui.status = error;
+        }
+    });
+    ui.add_space(8.0);
+}
+
 fn button(app: &mut FilmcraftApp, ui: &mut egui::Ui, id: &str, label: &str) -> bool {
     let r = ui.button(label);
     app.auto.add_response(id, &r, label);
