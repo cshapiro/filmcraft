@@ -1,5 +1,8 @@
-use super::settings::{combo, drag};
-use super::*;
+use super::settings::{DragOptions, combo, drag};
+use super::{
+    Align2, CUSTOM, Color32, ExportUi, FilmcraftApp, FrameKey, Rect, Reg, Scaling, Sense, Target, Tick, Tokens, Value, export_params, format_bytes, json,
+    output_path, pos2, vec2,
+};
 
 // ---------------------------------------------------------------------------------------------
 // right: preview, range, summary, buttons
@@ -20,6 +23,9 @@ pub(crate) fn preview_bounds(app: &FilmcraftApp) -> Option<(i64, i64)> {
 
 /// Navigate the sequence playhead without editing project content or export settings.
 pub(crate) fn preview_command(app: &mut FilmcraftApp, command: &str, params: &Value) -> Result<Value, String> {
+    if app.ui.mode != crate::state::Mode::Export {
+        return Err("Open Export mode to use its preview controls".into());
+    }
     let (first, last) = preview_bounds(app).ok_or("Open a sequence to export")?;
     let rate = app.session.sequence_rate();
     let current = rate.frame_at(app.session.playhead());
@@ -162,8 +168,8 @@ pub(super) fn preview_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Re
                 ex.range = RANGES[i].0.into();
             }
             if ex.range == "custom" {
-                drag(ui, &mut reg, "export.range.start", &mut ex.custom_start, 0.0..=86_400.0, 0.04, " s", 2);
-                drag(ui, &mut reg, "export.range.end", &mut ex.custom_end, 0.0..=86_400.0, 0.04, " s", 2);
+                drag(ui, &mut reg, "export.range.start", &mut ex.custom_start, DragOptions { range: 0.0..=86_400.0, speed: 0.04, suffix: " s", decimals: 2 });
+                drag(ui, &mut reg, "export.range.end", &mut ex.custom_end, DragOptions { range: 0.0..=86_400.0, speed: 0.04, suffix: " s", decimals: 2 });
             }
         });
         if ex.settings.has_video() {
@@ -291,6 +297,36 @@ mod preview_tests {
         app.ui.export.custom_start = 2.0;
         app.ui.export.custom_end = 4.0;
         app
+    }
+
+    #[test]
+    fn export_preview_commands_are_rejected_outside_export_mode() {
+        for mode in [Mode::Edit, Mode::Import] {
+            let mut app = app();
+            app.ui.mode = mode;
+            let ctx = egui::Context::default();
+            let before = serde_json::to_value(&app.session.project).unwrap();
+            let playhead = app.session.playhead();
+            let revision = app.session.revision;
+            let dirty = app.session.is_dirty();
+            let undo = app.session.undo_mark();
+            for command in [
+                "export.preview.seek",
+                "export.preview.toggle",
+                "export.preview.first",
+                "export.preview.last",
+                "export.preview.stepBack",
+                "export.preview.stepForward",
+            ] {
+                assert!(crate::menus::invoke(&mut app, &ctx, command, json!({"frame": 51})).is_err(), "{command} in {mode:?}");
+                assert!(!app.playback.playing);
+                assert_eq!(app.session.playhead(), playhead);
+                assert_eq!(serde_json::to_value(&app.session.project).unwrap(), before);
+                assert_eq!(app.session.revision, revision);
+                assert_eq!(app.session.is_dirty(), dirty);
+                assert_eq!(app.session.undo_mark(), undo);
+            }
+        }
     }
 
     #[test]

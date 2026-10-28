@@ -123,9 +123,10 @@ control bounds, overflow actions and Source drag payloads across monitor widths 
 
 Export includes a seek bar, sequence timecode / last selected frame, Play/Stop, previous/next
 frame and start/end buttons. Space, Left/Right and Shift+I/Shift+O address the sequence while
-Export is open, even if Source previously had focus. Scrubbing pauses playback and follows the
-existing scrub-audio preference. Playback uses the existing sequence audio clock, prefetch and
-preroll; cached pictures remain visible while the next frame renders.
+Export is open, even if Source previously had focus. Export-preview automation commands require
+Export mode. Dragging the seek bar pauses playback and follows the existing scrub-audio preference
+through the shared per-frame scrub handler. Playback uses the existing sequence audio clock,
+prefetch and preroll; cached pictures remain visible while the next frame renders.
 
 The seek bar and playback respect Entire Source, Source In/Out (inclusive Out), Work Area and
 Custom. Playback stops on the last selected frame; Play there restarts at the range start.
