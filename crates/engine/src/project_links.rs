@@ -541,7 +541,9 @@ fn render_cached(
     progress: &Progress,
 ) -> std::result::Result<(String, String), String> {
     let revision = adapter.revision(services, link)?;
-    let dir = crate::temp_dir().join("FilmCraftLinkedProjects-v1");
+    let dir = cache_dir();
+    // Before trusting a cached file: another local user must not own or redirect the folder.
+    private_dir(&dir)?;
     let path = dir.join(format!("{revision}.{}", adapter.extension()));
     if path.is_file() {
         return Ok((revision, path.to_string_lossy().into_owned()));
@@ -549,7 +551,6 @@ fn render_cached(
     if progress.cancel.load(Ordering::Relaxed) {
         return Err("linked render cancelled".into());
     }
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     static NEXT_RENDER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let serial = NEXT_RENDER.fetch_add(1, Ordering::Relaxed);
     let part = dir.join(format!("{revision}-{}-{serial}.part.{}", std::process::id(), adapter.extension()));
@@ -577,6 +578,46 @@ fn render_cached(
     });
     let _ = std::fs::remove_file(&part);
     rendered
+}
+
+/// The per-user linked-render cache: `~/Library/Caches/FilmCraft` on macOS, `$XDG_CACHE_HOME/filmcraft`
+/// or `~/.cache/filmcraft` elsewhere on Unix. Windows' temp folder is already per-user.
+fn cache_dir() -> PathBuf {
+    let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute());
+    let user = if cfg!(windows) || cfg!(target_arch = "wasm32") {
+        None
+    } else if cfg!(target_os = "macos") {
+        env("HOME").map(|h| h.join("Library/Caches/FilmCraft"))
+    } else {
+        env("XDG_CACHE_HOME").map(|d| d.join("filmcraft")).or_else(|| env("HOME").map(|h| h.join(".cache/filmcraft")))
+    };
+    user.unwrap_or_else(crate::temp_dir).join("FilmCraftLinkedProjects-v1")
+}
+
+/// Create `dir` readable only by this user, or check that an existing one is a real folder this user
+/// owns: `chmod` fails on another user's folder, so a pre-created shared-temp folder is refused.
+fn private_dir(dir: &Path) -> std::result::Result<(), String> {
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.to_string()),
+        }
+        let meta = std::fs::symlink_metadata(dir).map_err(|e| e.to_string())?;
+        if !meta.is_dir() {
+            return Err(format!("linked render cache {} is not a private folder", dir.display()));
+        }
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("linked render cache {} is not owned by this user: {e}", dir.display()))?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 macro_rules! cmd {
@@ -847,6 +888,28 @@ mod tests {
         render_cached(&*mock, &*s.services, &link, &progress).unwrap();
         assert_eq!(*progress.status.lock().unwrap(), "Rendering Synthetic artboard");
         assert_eq!(mock.renders.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn render_cache_folder_is_created_privately() {
+        let root = crate::media_test_util::tmp_dir("project-links-private");
+        let dir = root.join(format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())).join("cache");
+        private_dir(&dir).unwrap();
+        assert!(dir.is_dir());
+        private_dir(&dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+            // A folder left open to other users is tightened before any cached file is trusted.
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+            private_dir(&dir).unwrap();
+            assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+            // A planted symlink can redirect the cache elsewhere, so it is refused.
+            let link = dir.with_file_name("planted");
+            std::os::unix::fs::symlink(&dir, &link).unwrap();
+            assert!(private_dir(&link).is_err());
+        }
     }
 
     #[test]

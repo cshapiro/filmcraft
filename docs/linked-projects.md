@@ -81,8 +81,11 @@ a render are rejected and retried. Whole-dependency hashing happens on the worke
 optimizing that cost without weakening invalidation is follow-up work.
 
 EffectCraft renders the complete composition at source resolution/rate as ProRes 4444 RGBA, with
-audio off. The cache is disposable under the OS temp directory `FilmCraftLinkedProjects-v1` and
-survives app restarts until the OS clears it. Outputs must be readable visual media and at most 1 GiB. Files publish only after successful rendering; existing
+audio off. The cache is disposable and lives in a per-user `FilmCraftLinkedProjects-v1` folder:
+under `~/Library/Caches/FilmCraft` on macOS, `$XDG_CACHE_HOME/filmcraft` (or `~/.cache/filmcraft`)
+on other Unix systems, and the user's temp directory on Windows. On Unix the folder is created
+`0700`, and one this user cannot `chmod` (another user's folder) or a symlink is refused before any
+cached file is trusted. The cache survives app restarts until the OS or the user clears it. Outputs must be readable visual media and at most 1 GiB. Files publish only after successful rendering; existing
 readers retain complete files. Successful cache replacement invalidates FilmCraft's source/view
 caches without adding undo steps. Last-good media stays visible after an update fails. Status reports
 the error; final export refuses missing/changed sources instead of silently exporting last-good media.

@@ -33,17 +33,31 @@ pub fn open(ctx: &Context) {
 /// Explain session-only renderer authorization before the user attempts a final export.
 /// This is a cheap readiness hint; the worker still checks revisions and cache validity.
 pub(super) fn export_notice(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
-    if app.session.project.project_links.is_empty() {
-        return;
-    }
-    let Some(seq) = app.session.state.active_sequence else { return };
-    let used = filmcraft_engine::project_tools::closure(&app.session.project, &[seq]);
-    let missing = app.session.project.project_links.iter().find(|(id, link)| {
-        used.contains(id) && !link.baked && app.session.project.item(**id).is_some() && !app.session.project_links.adapters.contains_key(&link.provider)
+    let adapters = &app.session.project_links.adapters;
+    // The first linked composition `seq` uses whose renderer this session has not enabled.
+    let missing = |project: &filmcraft_project::Project, seq| {
+        if project.project_links.is_empty() {
+            return None;
+        }
+        let used = filmcraft_engine::project_tools::closure(project, &[seq]);
+        project
+            .project_links
+            .iter()
+            .find(|(id, link)| used.contains(id) && !link.baked && project.item(**id).is_some() && !adapters.contains_key(&link.provider))
+            .map(|(_, link)| link.object_name.clone())
+    };
+    // Immediate export uses the active sequence; each ready queue item exports its own snapshot.
+    let active = app.session.state.active_sequence.and_then(|seq| missing(&app.session.project, seq));
+    let name = active.or_else(|| {
+        app.session
+            .export_queue
+            .items
+            .iter()
+            .filter(|i| i.status == filmcraft_engine::export_tools::QueueStatus::Ready)
+            .find_map(|i| missing(&i.project, i.sequence))
     });
-    let Some((_, link)) = missing else { return };
-    let message =
-        tlf!("Export blocked: enable the renderer for linked composition {name} in this session, or bake it to ordinary media.", name = link.object_name);
+    let Some(name) = name else { return };
+    let message = tlf!("Export blocked: enable the renderer for linked composition {name} in this session, or bake it to ordinary media.", name);
     egui::Frame::new().fill(app.tokens.field_bg).inner_margin(8).show(ui, |ui| {
         ui.set_width((ui.available_width() - 16.0).max(0.0));
         let response = ui.add(egui::Label::new(egui::RichText::new(&message).color(app.tokens.danger)).wrap());

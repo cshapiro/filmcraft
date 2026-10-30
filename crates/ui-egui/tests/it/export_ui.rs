@@ -164,8 +164,13 @@ fn export_explains_disabled_link_and_opens_renderer_setup() {
     d.frames(3);
     assert!(!d.has("export.linkedProject.warning"), "baked media needs no renderer");
     Arc::make_mut(&mut d.app().session.project).project_links.get_mut(&item).unwrap().baked = false;
+    // Queued exports keep their own project snapshot and sequence.
+    d.exec("export.queue.add", json!({"preset": "Waveform Audio 48 kHz 16-bit", "path": d.path("linked.wav")}));
     let unrelated = Arc::make_mut(&mut d.app().session.project).new_sequence("Unrelated", Default::default(), 1, 0, None);
     d.app().session.state.active_sequence = Some(unrelated);
+    d.frames(3);
+    assert!(d.has("export.linkedProject.warning"), "a ready queued export of the linked sequence still needs the renderer");
+    d.app().session.export_queue.items.clear();
     d.frames(3);
     assert!(!d.has("export.linkedProject.warning"), "unused links must not block another sequence");
     assert!(d.app().session.jobs.is_empty(), "the warning and setup must not start an export");
