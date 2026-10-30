@@ -1045,6 +1045,7 @@
 	All Caps	Semua Kapital
 	Small Caps	Kapital Kecil
 	Underline	Garis Bawah
+	Strikethrough	Coret
 	OpenType	OpenType
 	Kerning	Kerning
 	Ligatures	Ligatur
@@ -3585,3 +3586,8 @@
 	No matching text.	Tidak ada teks yang cocok.
 	Export blocked: enable the renderer for linked composition {name} in this session, or bake it to ordinary media.	Ekspor diblokir: aktifkan perender untuk komposisi tertaut {name} dalam sesi ini, atau ubah menjadi media biasa.
 	Configure linked projects…	Konfigurasikan proyek tertaut…
+
+# Control server: the status-bar notice when --control cannot serve.
+	The control server is disabled: FILMCRAFT_CONTROL_TOKEN must contain 64 random hex characters (see docs/control-protocol.md)	Server kontrol dinonaktifkan: FILMCRAFT_CONTROL_TOKEN harus berisi 64 karakter heksadesimal acak (lihat docs/control-protocol.md)
+
+# Control server: the bind-failure notice (port collisions; #3318 may show it too).

@@ -1042,6 +1042,7 @@
 	All Caps	Tudo em maiúsculas
 	Small Caps	Versaletes
 	Underline	Sublinhado
+	Strikethrough	Tachado
 	OpenType	OpenType
 	Kerning	Kerning
 	Ligatures	Ligaduras
@@ -3588,3 +3589,8 @@
 	No matching text.	Nenhum texto corresponde.
 	Export blocked: enable the renderer for linked composition {name} in this session, or bake it to ordinary media.	Exportação bloqueada: ative o renderizador da composição vinculada {name} nesta sessão ou converta-a em mídia comum.
 	Configure linked projects…	Configurar projetos vinculados…
+
+# Control server: the status-bar notice when --control cannot serve.
+	The control server is disabled: FILMCRAFT_CONTROL_TOKEN must contain 64 random hex characters (see docs/control-protocol.md)	O servidor de controle está desativado: FILMCRAFT_CONTROL_TOKEN deve conter 64 caracteres hexadecimais aleatórios (veja docs/control-protocol.md)
+
+# Control server: the bind-failure notice (port collisions; #3318 may show it too).

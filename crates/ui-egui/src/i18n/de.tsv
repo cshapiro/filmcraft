@@ -1075,6 +1075,7 @@
 	All Caps	Großbuchstaben
 	Small Caps	Kapitälchen
 	Underline	Unterstrichen
+	Strikethrough	Durchgestrichen
 	OpenType	OpenType
 	Kerning	Unterschneidung
 	Ligatures	Ligaturen
@@ -3616,3 +3617,8 @@
 	Open this address in your browser yourself:	Öffne diese Adresse selbst in deinem Browser:
 	Export blocked: enable the renderer for linked composition {name} in this session, or bake it to ordinary media.	Export blockiert: Aktivieren Sie den Renderer für die verknüpfte Komposition {name} in dieser Sitzung oder wandeln Sie sie in gewöhnliche Medien um.
 	Configure linked projects…	Verknüpfte Projekte konfigurieren…
+
+# Control server: the status-bar notice when --control cannot serve.
+	The control server is disabled: FILMCRAFT_CONTROL_TOKEN must contain 64 random hex characters (see docs/control-protocol.md)	Der Kontrollserver ist deaktiviert: FILMCRAFT_CONTROL_TOKEN muss 64 zufällige Hexzeichen enthalten (siehe docs/control-protocol.md)
+
+# Control server: the bind-failure notice (port collisions; #3318 may show it too).
