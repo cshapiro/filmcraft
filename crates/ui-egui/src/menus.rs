@@ -468,6 +468,12 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
             filmcraft_engine::find_command(id).map_or(Ok(()), |c| (c.enabled)(&app.session))?;
             return crate::panels::interchange_export::open(app, ctx, id);
         }
+        // File ▸ Export ▸ Captions… (and the Text panel's Export captions…) opens the caption export
+        // settings (#3365); with a path it exports directly.
+        "captions.export" if params.get("path").is_none() => {
+            filmcraft_engine::find_command(id).map_or(Ok(()), |c| (c.enabled)(&app.session))?;
+            return crate::panels::caption_export::open(app, ctx, &params);
+        }
         // File ▸ Export ▸ Media… opens the Export mode, like ⌘M (#382); with a path it exports directly.
         "file.exportMedia" if params.get("path").is_none() => {
             filmcraft_engine::find_command(id).map_or(Ok(()), |c| (c.enabled)(&app.session))?;
@@ -598,7 +604,7 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
         || (id == "file.saveCopy" && params.get("path").is_none())
         || (id == "file.open" && params.get("path").is_none())
         || (id == "file.save" && params.get("path").is_none() && app.session.path.is_none())
-        || (matches!(id, "captions.import" | "captions.export") && params.get("path").is_none())
+        || (id == "captions.import" && params.get("path").is_none())
         || (id == "graphics.newFromFile" && params.get("path").is_none())
         || (crate::EXPORT_SAVE_DIALOGS.iter().any(|(c, ..)| *c == id) && params.get("path").is_none())
     {
@@ -1246,6 +1252,8 @@ mod tests {
 
         let app = FilmcraftApp::new(filmcraft_engine::Session::default());
         let mut harness = Harness::builder().with_size(egui::vec2(1200.0, 700.0)).build_ui_state(|ui, app| menu_bar(app, ui), app);
+        // the app's fonts, which draw the macOS shortcut symbols (⇧⌘S) egui's default fonts lack
+        crate::theme::install(&harness.ctx, &harness.state().tokens);
         harness.run_steps(3);
         // Nothing open: hovering a title does not open it.
         harness.get_by_label("Edit").hover();

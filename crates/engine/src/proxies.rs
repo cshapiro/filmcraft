@@ -133,7 +133,7 @@ fn transcode_with_file(
     let mut c = clip.clone();
     c.offline = false;
     c.proxy = None;
-    let item = p.add_item(name, filmcraft_project::Label::Iris, ItemKind::Media(c), None);
+    let item = p.add_item(name, filmcraft_project::Label::Iris, ItemKind::Media(Box::new(c)), None);
     let has_v = info.video.is_some();
     let has_a = info.has_audio();
     let seq = p.new_sequence("transcode", st, usize::from(has_v), usize::from(has_a), None);
@@ -212,7 +212,7 @@ fn reserve_unique_path(dir: &Path, stem: &str, suffix: &str, ext: &str, taken: &
             n += 1;
             continue;
         }
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        match std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path) {
             Ok(file) => {
                 return Ok(ReservedOutput { path, file: Some(Arc::new(file)), keep: false });
             }

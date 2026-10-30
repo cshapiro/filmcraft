@@ -201,7 +201,7 @@ impl FaceBytes {
 }
 
 /// Vertical metrics at a pixel size (all positive distances, y down from the baseline for the
-/// underline position).
+/// underline and strikethrough positions, which are the top edges of their strokes).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct VMetrics {
     pub ascent: f32,
@@ -211,6 +211,8 @@ pub struct VMetrics {
     pub x_height: f32,
     pub underline_pos: f32,
     pub underline_thickness: f32,
+    pub strikethrough_pos: f32,
+    pub strikethrough_thickness: f32,
 }
 
 impl Face {
@@ -284,18 +286,27 @@ impl Face {
                 x_height: px * 0.5,
                 underline_pos: px * 0.1,
                 underline_thickness: px * 0.06,
+                strikethrough_pos: -px * 0.28,
+                strikethrough_thickness: px * 0.06,
                 ..Default::default()
             };
         };
         let m = f.metrics(Size::new(px), LocationRef::default());
+        let x_height = m.x_height.unwrap_or(m.ascent * 0.5);
+        // OS/2 strikeout: offset of the stroke's top above the baseline. Fonts that leave it zero
+        // (or put it below the baseline) get a stroke centred on half the x-height.
+        let strike_t = m.strikeout.map_or(px * 0.06, |d| d.thickness).max(px * 0.03);
+        let strike_top = m.strikeout.map(|d| d.offset).filter(|o| *o > 0.0 && o.is_finite()).unwrap_or(x_height * 0.5 + strike_t * 0.5);
         VMetrics {
             ascent: m.ascent,
             descent: -m.descent,
             line_gap: m.leading,
             cap_height: m.cap_height.unwrap_or(m.ascent * 0.7),
-            x_height: m.x_height.unwrap_or(m.ascent * 0.5),
+            x_height,
             underline_pos: m.underline.map_or(px * 0.1, |u| -u.offset),
             underline_thickness: m.underline.map_or(px * 0.06, |u| u.thickness.max(px * 0.03)),
+            strikethrough_pos: -strike_top,
+            strikethrough_thickness: strike_t,
         }
     }
     /// Whether the face's GSUB offers an OpenType feature (e.g. `smcp`).
@@ -310,13 +321,25 @@ impl Face {
 
 struct Db {
     faces: Vec<Arc<Face>>,
+    /// Served by [`face`] if no face is registered (the bundled faces always are).
+    fallback: Arc<Face>,
     scanned: bool,
 }
 
 fn db() -> &'static RwLock<Db> {
     static DB: OnceLock<RwLock<Db>> = OnceLock::new();
     DB.get_or_init(|| {
-        let mut db = Db { faces: Vec::new(), scanned: false };
+        let info = FaceInfo {
+            family: "Inter".into(),
+            style: "Regular".into(),
+            weight: 400,
+            italic: false,
+            index: 0,
+            data: FaceData::Static(INTER_REGULAR),
+            origin: "bundled",
+        };
+        let fallback = Arc::new(Face { id: 0, info, bytes: OnceLock::new(), shaper: OnceLock::new() });
+        let mut db = Db { faces: Vec::new(), fallback, scanned: false };
         for b in [INTER_REGULAR, INTER_MEDIUM, INTER_SEMIBOLD, INTER_BOLD, INTER_ITALIC, JETBRAINS_MONO_REGULAR, NOTO_SERIF_REGULAR] {
             for n in read_faces_bytes(b) {
                 push(&mut db, info_from(n, FaceData::Static(b), "bundled"));
@@ -384,11 +407,10 @@ pub fn system_scanned() -> bool {
 
 /// A face by id (unknown ids give the default face).
 // The bundled faces are compiled in (`include_bytes!`) and registered when the database is
-// created, so `faces` is never empty.
-#[allow(clippy::expect_used)]
+// created, so `faces` is never empty; the fallback only covers a corrupt bundle.
 pub fn face(id: FaceId) -> Arc<Face> {
     let d = db().read().unwrap_or_else(PoisonError::into_inner);
-    d.faces.get(id).or_else(|| d.faces.first()).cloned().expect("bundled fonts present")
+    d.faces.get(id).or_else(|| d.faces.first()).unwrap_or(&d.fallback).clone()
 }
 
 /// All faces (bundled first).
